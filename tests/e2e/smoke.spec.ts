@@ -37,7 +37,7 @@ test("restores session and displays empty operations", async ({ page }) => {
 });
 
 test("persists theme and language", async ({ page }) => {
-  await page.goto("/settings/appearance");
+  await page.goto("/settings");
   await page.getByRole("button", { name: "Тёмная", exact: true }).click();
   await expect(page.locator("html")).toHaveClass(/dark/);
   await page.getByRole("button", { name: "Язык интерфейса" }).click();
@@ -82,14 +82,9 @@ test("clears session on unauthorized response", async ({ page }) => {
   ).toBeNull();
 });
 
-test("opens and closes mobile navigation", async ({ page }) => {
+test("navigates on mobile", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
-  await page.getByRole("button", { name: "Открыть меню" }).click();
-  await page
-    .getByRole("dialog")
-    .getByRole("link", { name: "Операции", exact: true })
-    .click();
+  await page.getByRole("link", { name: "Операции", exact: true }).click();
   await expect(page).toHaveURL(/\/operations$/);
-  await expect(page.getByRole("dialog")).not.toBeVisible();
 });

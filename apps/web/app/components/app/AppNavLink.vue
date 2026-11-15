@@ -10,15 +10,15 @@ const active = computed(() => isNavActive(route.path, props.item.to));
   <UTooltip
     :text="t(item.label)"
     :disabled="!compact"
-    :content="{ side: 'right' }"
+    :content="{ side: 'bottom' }"
   >
     <NuxtLink
       :to="item.to"
       :aria-label="t(item.label)"
-      class="flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium transition-colors"
+      class="flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium transition-colors"
       :class="[
         active
-          ? 'bg-elevated text-highlighted'
+          ? 'bg-elevated text-highlighted shadow-xs'
           : 'text-muted hover:bg-elevated/60 hover:text-highlighted',
         compact ? 'justify-center' : '',
       ]"

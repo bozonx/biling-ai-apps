@@ -14,7 +14,7 @@ const config = useRuntimeConfig();
     >
       <UIcon name="i-lucide-wallet" class="size-4" />
     </span>
-    <span v-if="!compact" class="truncate text-sm">{{
+    <span v-if="!compact" class="hidden truncate text-sm sm:inline">{{
       config.public.appName
     }}</span>
   </NuxtLink>
