@@ -7,11 +7,33 @@ import {
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { Database } from "./database.js";
 
+const DEV_STAFF_IDENTITY_ID = "0193a000-0000-7000-8000-000000000004";
+
 @Injectable()
 export class StaffAccess {
   private jwks?: ReturnType<typeof createRemoteJWKSet>;
   constructor(@Inject(Database) private readonly db: Database) {}
   async authorize(header: string | undefined, write = false) {
+    if (
+      process.env.NODE_ENV !== "production" &&
+      process.env.DEV_ACCOUNT_ENABLED === "true" &&
+      header === "Bearer dev-admin"
+    ) {
+      await this.db.identity.upsert({
+        where: { id: DEV_STAFF_IDENTITY_ID },
+        create: { id: DEV_STAFF_IDENTITY_ID },
+        update: {},
+      });
+      await this.db.staffRole.upsert({
+        where: {
+          identityId_role: { identityId: DEV_STAFF_IDENTITY_ID, role: "admin" },
+        },
+        create: { identityId: DEV_STAFF_IDENTITY_ID, role: "admin" },
+        update: {},
+      });
+      return DEV_STAFF_IDENTITY_ID;
+    }
+
     const issuer = process.env.STAFF_OIDC_ISSUER;
     const audience = process.env.STAFF_OIDC_AUDIENCE;
     const url = process.env.STAFF_OIDC_JWKS_URL;

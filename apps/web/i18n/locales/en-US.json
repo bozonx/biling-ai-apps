@@ -106,6 +106,7 @@
     "title": "Administration",
     "token": "Staff access token",
     "tokenHint": "The token stays in page memory. IdentityBinding and StaffRole are required.",
+    "signInDev": "Sign in as developer",
     "load": "Load",
     "disconnect": "Disconnect",
     "action": "Action",

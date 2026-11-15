@@ -133,3 +133,46 @@ test("publication only transitions a draft and rejects past effective dates", as
   ).rejects.toThrow();
   expect(calls).toHaveLength(1);
 });
+
+test("dev-admin access authorizes in development when dev account is enabled and rejects in production", async () => {
+  const upserted: unknown[] = [];
+  const db = {
+    identity: {
+      upsert: async (args: unknown) => {
+        upserted.push(args);
+        return {};
+      },
+    },
+    staffRole: {
+      upsert: async (args: unknown) => {
+        upserted.push(args);
+        return {};
+      },
+    },
+  } as unknown as Database;
+  const staff = new StaffAccess(db);
+
+  const prevDev = process.env.DEV_ACCOUNT_ENABLED;
+  const prevEnv = process.env.NODE_ENV;
+
+  try {
+    process.env.DEV_ACCOUNT_ENABLED = "true";
+    process.env.NODE_ENV = "development";
+
+    const actor = await staff.authorize("Bearer dev-admin", true);
+    expect(actor).toBe("0193a000-0000-7000-8000-000000000004");
+    expect(upserted).toHaveLength(2);
+
+    process.env.NODE_ENV = "production";
+    await expect(staff.authorize("Bearer dev-admin", true)).rejects.toThrow();
+
+    process.env.NODE_ENV = "development";
+    process.env.DEV_ACCOUNT_ENABLED = "false";
+    await expect(staff.authorize("Bearer dev-admin", true)).rejects.toThrow();
+  } finally {
+    if (prevDev === undefined) delete process.env.DEV_ACCOUNT_ENABLED;
+    else process.env.DEV_ACCOUNT_ENABLED = prevDev;
+    if (prevEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = prevEnv;
+  }
+});

@@ -106,6 +106,7 @@
     "title": "Администрирование",
     "token": "Токен staff",
     "tokenHint": "Токен хранится только в памяти страницы. Нужны IdentityBinding и StaffRole.",
+    "signInDev": "Войти как разработчик",
     "load": "Загрузить",
     "disconnect": "Выйти",
     "action": "Действие",

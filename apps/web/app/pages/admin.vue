@@ -1,6 +1,8 @@
 <script setup lang="ts">
 definePageMeta({ layout: false });
 const { t } = useI18n();
+const config = useRuntimeConfig();
+const devEnabled = computed(() => config.public.devLoginEnabled === true);
 const token = ref("");
 const action = ref("product");
 const busy = ref(false);
@@ -200,6 +202,10 @@ function disconnect() {
   secret.value = "";
   catalog.value = {};
 }
+async function signInDev() {
+  token.value = "dev-admin";
+  await load();
+}
 </script>
 
 <template>
@@ -216,6 +222,16 @@ function disconnect() {
         <UButton :loading="busy" :disabled="!token" @click="load">{{
           t("admin.load")
         }}</UButton>
+        <UButton
+          v-if="devEnabled"
+          variant="outline"
+          color="neutral"
+          icon="i-lucide-terminal"
+          :loading="busy"
+          @click="signInDev"
+        >
+          {{ t("admin.signInDev") }}
+        </UButton>
         <UButton variant="outline" @click="disconnect">{{
           t("admin.disconnect")
         }}</UButton>

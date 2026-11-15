@@ -53,6 +53,13 @@ async function main() {
         },
         update: {},
       });
+      await db.staffRole.upsert({
+        where: {
+          identityId_role: { identityId: DEV_IDENTITY_ID, role: "admin" },
+        },
+        create: { identityId: DEV_IDENTITY_ID, role: "admin" },
+        update: {},
+      });
       await grantOnce(productId, rate.id);
     }
 
