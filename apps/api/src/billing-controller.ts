@@ -182,6 +182,7 @@ export class BillingController {
     @Headers("authorization") auth: string | undefined,
     @Param("holdId") holdId: string,
     @Param("action") action: string,
+    @Body() body?: unknown,
   ) {
     const productId = await this.authorize(auth, "holds:write");
     return json(
@@ -189,6 +190,27 @@ export class BillingController {
         productId,
         parse(z.uuid(), holdId),
         parse(z.enum(["commit", "release"]), action),
+        body === undefined ||
+          (typeof body === "object" &&
+            body !== null &&
+            Object.keys(body).length === 0)
+          ? undefined
+          : parse(
+              z
+                .object({
+                  creditsMilli: z
+                    .string()
+                    .regex(/^(0|[1-9][0-9]{0,18})$/)
+                    .transform(BigInt),
+                  costNanos: z
+                    .string()
+                    .regex(/^(0|[1-9][0-9]{0,18})$/)
+                    .refine((v) => BigInt(v) <= 9223372036854775807n)
+                    .transform(BigInt),
+                })
+                .strict(),
+              body,
+            ),
       ),
     );
   }

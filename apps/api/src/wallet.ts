@@ -397,6 +397,7 @@ export class WalletService {
     productId: string,
     holdId: string,
     action: "commit" | "release" | "expire",
+    actual?: { creditsMilli: bigint; costNanos: bigint },
   ) {
     return this.db.$transaction(async (tx) => {
       const initial = await tx.creditHold.findFirst({
@@ -407,6 +408,15 @@ export class WalletService {
       const hold = await tx.creditHold.findUniqueOrThrow({
         where: { id: holdId },
       });
+      const charged = actual?.creditsMilli ?? hold.amountMilli;
+      if (
+        actual &&
+        (action !== "commit" ||
+          charged < 0n ||
+          charged > hold.amountMilli ||
+          actual.costNanos < 0n)
+      )
+        fail("INVALID_ACTUAL_USAGE");
       const status =
         action === "commit"
           ? "committed"
@@ -428,7 +438,8 @@ export class WalletService {
         });
         let allocations;
         try {
-          allocations = allocateCredits(buckets, hold.amountMilli, new Date());
+          allocations =
+            charged === 0n ? [] : allocateCredits(buckets, charged, new Date());
         } catch (error) {
           if (
             error instanceof RangeError &&
@@ -444,7 +455,7 @@ export class WalletService {
             kind: "commit",
             operationKey: `commit:${hold.id}`,
             walletSeq: wallet.lastOperationSeq + 1n,
-            balanceAfterMilli: wallet.balanceMilli - hold.amountMilli,
+            balanceAfterMilli: wallet.balanceMilli - charged,
             debtAfterMilli: wallet.debtMilli,
           },
         });
@@ -455,11 +466,14 @@ export class WalletService {
             featureId: hold.featureId!,
             holdId,
             operationId: operation.id,
-            costSource:
-              hold.estimatedCostNanos === null ? "unknown" : "estimate",
-            costNanos: hold.estimatedCostNanos ?? 0n,
+            costSource: actual
+              ? "provider"
+              : hold.estimatedCostNanos === null
+                ? "unknown"
+                : "estimate",
+            costNanos: actual?.costNanos ?? hold.estimatedCostNanos ?? 0n,
             status: "ok",
-            creditsChargedMilli: hold.amountMilli,
+            creditsChargedMilli: charged,
             idempotencyKey: `commit:${hold.id}`,
             occurredAt: new Date(),
           },
@@ -497,19 +511,24 @@ export class WalletService {
         data: {
           heldMilli: { decrement: hold.amountMilli },
           balanceMilli: {
-            decrement: action === "commit" ? hold.amountMilli : 0n,
+            decrement: action === "commit" ? charged : 0n,
           },
           lastOperationSeq: { increment: action === "commit" ? 1 : 0 },
           version: { increment: 1 },
         },
       });
-      await closeLimits(tx, hold.limitReservations, action === "commit");
+      await closeLimits(
+        tx,
+        hold.limitReservations,
+        action === "commit",
+        actual ? { credits: charged, cost_nanos: actual.costNanos } : undefined,
+      );
       return tx.creditHold.update({
         where: { id: holdId },
         data: {
           status,
           closedAt: new Date(),
-          committedMilli: action === "commit" ? hold.amountMilli : 0n,
+          committedMilli: action === "commit" ? charged : 0n,
         },
       });
     });
