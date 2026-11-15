@@ -1,3 +1,16 @@
+// Схема БД биллинг-сервиса. Источник: dev_docs/billing-service-design.md (v4).
+//
+// Соглашения (§2):
+//  - PK — UUIDv7 (инвариант 12).
+//  - Деньги — BigInt, микроединицы (1_000_000 = 1 USD); себестоимость AI — нано-USD.
+//  - Кредиты — BigInt, милли-кредиты (1000 = 1 кредит).
+//  - CreditLedgerEntry, UsageEvent, PaymentRefund — только дописываются.
+//  - На UsageEvent нет внешних ключей (ни на него, ни из него) — мягкие ссылки.
+//  - Уникальности с NULLS NOT DISTINCT и частичные индексы Prisma не умеет —
+//    они создаются сырой миграцией (помечены «RAW»).
+//  - Внешние идентификаторы людей (issuer/subject/email) живут только в
+//    Identity и BillingAccount (инвариант 11).
+
 generator client {
   provider     = "prisma-client"
   moduleFormat = "esm"
@@ -8,9 +21,1251 @@ datasource db {
   provider = "postgresql"
 }
 
+// ============================================================================
+// Enums
+// ============================================================================
+
+enum ProductStatus {
+  active
+  disabled
+}
+
+enum AccountKind {
+  personal
+  team // в v1 не создаётся (§5.3)
+}
+
+enum AccountStatus {
+  active
+  suspended
+  deleted
+}
+
+enum PaymentSource {
+  paddle
+  polar
+  revenuecat
+  manual
+}
+
+enum EntitlementType {
+  bool
+  int
+  enum
+}
+
+enum EntitlementMerge {
+  max
+  or
+  // 'sum' между базовыми источниками запрещён (§6.3)
+}
+
+enum PlanKind {
+  base
+  addon
+  bundle
+}
+
+enum Visibility {
+  public
+  unlisted
+  archived
+}
+
+enum BillingInterval {
+  month
+  year
+}
+
+enum FeaturePricing {
+  fixed
+  metered
+}
+
+enum FeatureStatus {
+  active
+  disabled
+}
+
+enum PromotionKind {
+  discount // ссылка на купон MoR
+  grant // «при оплате X выдать Y»
+}
+
+enum CreditBucketKind {
+  plan
+  pack
+  promo
+  referral
+  compensation
+  trial
+}
+
+enum LedgerReason {
+  accrual
+  purchase
+  consumption
+  expiry
+  refund
+  revoke
+  adjustment
+  referral_reward
+  promo
+  debt
+  debt_repayment
+}
+
+enum HoldKind {
+  hold
+  lease
+}
+
+enum HoldStatus {
+  open
+  committed
+  released
+  expired
+}
+
+enum UsageStatus {
+  ok
+  error
+  partial
+  late
+}
+
+enum ModelRouteKind {
+  llm
+  stt
+  tts
+  image
+  video
+  mt
+  embed
+}
+
+enum PriceVersionSource {
+  manual
+  seed
+  sync
+  provider_api @map("provider-api")
+}
+
+enum PriceVersionStatus {
+  draft // черновик от pricing-sync (§10.4)
+  published
+}
+
+enum SubscriptionStatus {
+  trialing
+  active
+  past_due
+  read_only
+  expired
+  // paused — добавится вместе с RevenueCat (этап 7)
+}
+
+enum PurchaseStatus {
+  pending
+  paid
+  refunded
+}
+
+enum PaymentKind {
+  subscription_initial
+  subscription_renewal
+  subscription_change
+  one_time
+}
+
+enum PaymentStatus {
+  pending
+  succeeded
+  failed
+  refunded
+  partially_refunded
+  chargeback
+}
+
+enum RefundKind {
+  refund
+  chargeback
+}
+
+enum PlanGrantSource {
+  default
+  referral
+  promo
+  manual
+  beta
+}
+
+enum GrantStatus {
+  active
+  ended
+  revoked
+  converted // сконвертирован в кредиты (rules.fallbackCredits, §13.3)
+}
+
+enum PartnerTier {
+  user
+  partner
+}
+
+enum ReferralProgramStatus {
+  draft
+  active
+  archived
+}
+
+enum ReferralStatus {
+  attributed
+  converted // первая оплата
+  rejected // антифрод
+}
+
+enum ReferralRewardKind {
+  credits
+  plan_grant
+  commission // выплаты — позже (§13.4)
+}
+
+enum ReferralTrigger {
+  signup
+  first_payment
+  milestone
+  renewal
+}
+
+enum ReferralRewardStatus {
+  pending
+  review
+  granted
+  void
+}
+
+enum LimitScope {
+  actor
+  account
+}
+
+enum LimitPolicyScope {
+  product
+  deployment
+}
+
+enum LimitWindow {
+  minute
+  hour
+  day
+  month
+}
+
+enum LimitMeter {
+  credits
+  cost_nanos
+  requests
+}
+
+enum LimitAction {
+  deny
+}
+
+enum QuotaReservationStatus {
+  open
+  committed
+  released
+  expired
+}
+
+enum ApiKeyStatus {
+  active
+  revoked
+}
+
+enum EndpointStatus {
+  active
+  disabled
+}
+
+enum OutboxStatus {
+  pending
+  delivered
+  failed
+  dead
+}
+
+enum InboxStatus {
+  received
+  processing
+  processed
+  failed
+  ignored
+}
+
+enum StaffRoleKind {
+  owner
+  admin
+  support
+  viewer
+}
+
+// ============================================================================
+// Продукты (§7.1)
+// ============================================================================
+
 model Product {
-  id        String   @id @default(uuid(7)) @db.Uuid
-  code      String   @unique
+  id        String        @id @default(uuid(7)) @db.Uuid
+  code      String        @unique // 'tyco', 'fastcat'
   name      String
-  createdAt DateTime @default(now())
+  status    ProductStatus @default(active)
+  /// грейсы, окно позднего commit, параметры lease, флаги (§8.6, §8.7, §12.2)
+  settings  Json          @default("{}")
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  entitlementKeys      ProductEntitlementKey[]
+  quotaKeys            ProductQuotaKey[]
+  creditRateVersions   CreditRateVersion[]
+  markupPolicyVersions MarkupPolicyVersion[]
+  creditPacks          CreditPack[]
+  features             ProductFeature[]
+  teamAccounts         BillingAccount[]
+  wallets              CreditWallet[]
+  buckets              CreditBucket[]
+  ledgerEntries        CreditLedgerEntry[]
+  holds                CreditHold[]
+  purchases            Purchase[]
+  planGrants           PlanGrant[]
+  referrals            Referral[]
+  referralRewards      ReferralReward[]
+  entitlementOverrides EntitlementOverride[]
+  limitOverrides       LimitOverride[]
+  limitPolicies        LimitPolicy[]
+  quotaUsages          QuotaUsage[]
+  quotaReservations    QuotaReservation[]
+  quotaSnapshots       QuotaUsageSnapshot[]
+  apiKeys              ProductApiKey[]
+  webhookEndpoints     ProductWebhookEndpoint[]
+  outboxEvents         OutboxEvent[]
+}
+
+/// Реестр прав продукта (§6.1)
+model ProductEntitlementKey {
+  id             String           @id @default(uuid(7)) @db.Uuid
+  productId      String           @db.Uuid
+  key            String // 'ai.model_tier'
+  type           EntitlementType
+  merge          EntitlementMerge
+  enumValues     String[] // для type=enum, по возрастанию (для merge=max)
+  keepOnReadOnly Boolean          @default(false)
+  description    String?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  product Product @relation(fields: [productId], references: [id])
+
+  @@unique([productId, key])
+}
+
+// ============================================================================
+// Identity и аккаунты (§5)
+// ============================================================================
+
+/// (issuer, subject) → actorId. Единственное место внешнего id человека.
+model Identity {
+  id        String    @id @default(uuid(7)) @db.Uuid // = actorId
+  issuer    String // URL IdP или 'product:<productId>'
+  subject   String
+  createdAt DateTime  @default(now())
+  deletedAt DateTime?
+
+  ownedAccounts BillingAccount[]
+  staffRoles    StaffRole[]
+  auditLogs     AdminAuditLog[]
+
+  @@unique([issuer, subject])
+}
+
+/// RAW: CREATE UNIQUE INDEX ... ON "BillingAccount"("ownerIdentityId") WHERE kind = 'personal'
+model BillingAccount {
+  id              String        @id @default(uuid(7)) @db.Uuid
+  kind            AccountKind   @default(personal)
+  ownerIdentityId String?       @db.Uuid
+  productId       String?       @db.Uuid // team: продукт команды
+  externalRef     String? // team: id команды в продукте
+  country         String?       @db.Char(2)
+  email           String?
+  status          AccountStatus @default(active)
+  /// флаг проверки после chargeback (§8.10)
+  reviewFlag      Boolean       @default(false)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  owner   Identity? @relation(fields: [ownerIdentityId], references: [id])
+  product Product?  @relation(fields: [productId], references: [id])
+
+  customers            AccountCustomer[]
+  wallets              CreditWallet[]
+  buckets              CreditBucket[]
+  ledgerEntries        CreditLedgerEntry[]
+  holds                CreditHold[]
+  subscriptions        Subscription[]
+  purchases            Purchase[]
+  payments             Payment[]
+  planGrants           PlanGrant[]
+  partner              Partner?
+  referredBy           Referral[]            @relation("ReferredAccount")
+  referralRewards      ReferralReward[]
+  entitlementOverrides EntitlementOverride[]
+  limitOverrides       LimitOverride[]
+  quotaUsages          QuotaUsage[]
+  quotaReservations    QuotaReservation[]
+  quotaSnapshots       QuotaUsageSnapshot[]
+
+  @@unique([productId, externalRef])
+  @@index([ownerIdentityId])
+}
+
+/// Клиент у источника оплаты (§5.2)
+model AccountCustomer {
+  id                 String        @id @default(uuid(7)) @db.Uuid
+  accountId          String        @db.Uuid
+  source             PaymentSource
+  externalCustomerId String
+  createdAt          DateTime      @default(now())
+
+  account BillingAccount @relation(fields: [accountId], references: [id])
+
+  @@unique([source, externalCustomerId])
+  @@unique([accountId, source])
+}
+
+// ============================================================================
+// Каталог (§7)
+// ============================================================================
+
+model CreditRateVersion {
+  id                String    @id @default(uuid(7)) @db.Uuid
+  productId         String    @db.Uuid
+  version           Int
+  creditValueMicros BigInt // цена 1 кредита в микро-USD
+  effectiveFrom     DateTime
+  publishedAt       DateTime?
+  createdAt         DateTime  @default(now())
+
+  product Product        @relation(fields: [productId], references: [id])
+  buckets CreditBucket[]
+
+  @@unique([productId, version])
+  @@index([productId, effectiveFrom])
+}
+
+model MarkupPolicyVersion {
+  id             String    @id @default(uuid(7)) @db.Uuid
+  productId      String    @db.Uuid
+  version        Int
+  /// ступени наценки по стоимости модели (§10.5)
+  tiers          Json
+  minChargeMilli BigInt?
+  effectiveFrom  DateTime
+  publishedAt    DateTime?
+  createdAt      DateTime  @default(now())
+
+  product Product @relation(fields: [productId], references: [id])
+
+  @@unique([productId, version])
+  @@index([productId, effectiveFrom])
+}
+
+model Plan {
+  id           String     @id @default(uuid(7)) @db.Uuid
+  /// коды продуктов, которые покрывает тариф; бандл — несколько
+  productScope String[]
+  code         String     @unique
+  name         String
+  kind         PlanKind
+  visibility   Visibility @default(public)
+  sortOrder    Int        @default(0)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  versions           PlanVersion[]
+  requiredByVersions PlanVersion[] @relation("RequiresBasePlan")
+}
+
+/// Неизменяема после publishedAt (инвариант 7)
+model PlanVersion {
+  id                 String    @id @default(uuid(7)) @db.Uuid
+  planId             String    @db.Uuid
+  version            Int
+  /// { tyco: { 'ai.enabled': true, ... } }
+  entitlements       Json      @default("{}")
+  /// { fastcat: { 'storage.bytes': 10737418240 } }
+  quotas             Json      @default("{}")
+  /// { tyco: 500000 } — милли-кредиты за месяц
+  creditGrants       Json      @default("{}")
+  /// { tyco: LimitRule[] } (§8.8)
+  limits             Json      @default("{}")
+  /// прочие правила версии (addon: «любой платный базовый», fallbackCredits)
+  rules              Json      @default("{}")
+  requiresBasePlanId String?   @db.Uuid
+  effectiveFrom      DateTime
+  effectiveTo        DateTime?
+  publishedAt        DateTime?
+  createdAt          DateTime  @default(now())
+
+  plan             Plan  @relation(fields: [planId], references: [id])
+  requiresBasePlan Plan? @relation("RequiresBasePlan", fields: [requiresBasePlanId], references: [id])
+
+  offers          Offer[]
+  subscriptions   Subscription[]
+  planGrants      PlanGrant[]
+  referralRewards ReferralReward[]
+
+  @@unique([planId, version])
+}
+
+/// Как версия продаётся через источник (§7.1)
+model Offer {
+  id              String          @id @default(uuid(7)) @db.Uuid
+  planVersionId   String          @db.Uuid
+  source          PaymentSource
+  interval        BillingInterval
+  trialDays       Int             @default(0)
+  externalPriceId String?
+  amountMicros    BigInt
+  currency        String          @db.Char(3)
+  region          String? // PPP
+  isActive        Boolean         @default(true)
+  createdAt       DateTime        @default(now())
+
+  planVersion   PlanVersion    @relation(fields: [planVersionId], references: [id])
+  subscriptions Subscription[]
+
+  @@unique([source, externalPriceId])
+  @@index([planVersionId])
+}
+
+model CreditPack {
+  id           String     @id @default(uuid(7)) @db.Uuid
+  productId    String     @db.Uuid
+  code         String
+  creditsMilli BigInt
+  validityDays Int        @default(365)
+  visibility   Visibility @default(public)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  product Product           @relation(fields: [productId], references: [id])
+  offers  CreditPackOffer[]
+
+  @@unique([productId, code])
+}
+
+model CreditPackOffer {
+  id              String        @id @default(uuid(7)) @db.Uuid
+  creditPackId    String        @db.Uuid
+  source          PaymentSource
+  externalPriceId String?
+  amountMicros    BigInt
+  currency        String        @db.Char(3)
+  region          String?
+  isActive        Boolean       @default(true)
+  createdAt       DateTime      @default(now())
+
+  creditPack CreditPack @relation(fields: [creditPackId], references: [id])
+  purchases  Purchase[]
+
+  @@unique([source, externalPriceId])
+}
+
+/// Реестр платных действий продукта (§7.1)
+model ProductFeature {
+  id                  String         @id @default(uuid(7)) @db.Uuid
+  productId           String         @db.Uuid
+  key                 String
+  requiredEntitlement String?
+  pricing             FeaturePricing
+  defaultRouteId      String?        @db.Uuid
+  defaultHoldTtlSec   Int            @default(300)
+  status              FeatureStatus  @default(active)
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+
+  product      Product        @relation(fields: [productId], references: [id])
+  defaultRoute ModelRoute?    @relation(fields: [defaultRouteId], references: [id])
+  prices       FeaturePrice[]
+  holds        CreditHold[]
+
+  @@unique([productId, key])
+}
+
+/// Фиксированная цена действия, версионно (§10.5)
+model FeaturePrice {
+  id            String    @id @default(uuid(7)) @db.Uuid
+  featureId     String    @db.Uuid
+  version       Int
+  creditsMilli  BigInt
+  effectiveFrom DateTime
+  publishedAt   DateTime?
+  createdAt     DateTime  @default(now())
+
+  feature ProductFeature @relation(fields: [featureId], references: [id])
+
+  @@unique([featureId, version])
+}
+
+/// Этап 4+ (§7.3, §8.5)
+model Promotion {
+  id                 String        @id @default(uuid(7)) @db.Uuid
+  code               String        @unique
+  kind               PromotionKind
+  rules              Json
+  externalDiscountId String? // kind=discount: id купона у MoR
+  startsAt           DateTime?
+  endsAt             DateTime?
+  maxRedemptions     Int?
+  redemptions        Int           @default(0)
+  createdAt          DateTime      @default(now())
+}
+
+// ============================================================================
+// Кредиты (§8)
+// ============================================================================
+
+/// Материализация + строка блокировки (SELECT ... FOR UPDATE)
+model CreditWallet {
+  accountId            String    @db.Uuid
+  productId            String    @db.Uuid
+  balanceMilli         BigInt    @default(0)
+  heldMilli            BigInt    @default(0)
+  debtMilli            BigInt    @default(0) // RAW: CHECK (debtMilli >= 0)
+  lastGrantPeriodStart DateTime?
+  version              Int       @default(0)
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  account BillingAccount @relation(fields: [accountId], references: [id])
+  product Product        @relation(fields: [productId], references: [id])
+
+  @@id([accountId, productId])
+}
+
+/// RAW: UNIQUE NULLS NOT DISTINCT (accountId, productId, sourceType, sourceId, periodStart)
+model CreditBucket {
+  id                  String           @id @default(uuid(7)) @db.Uuid
+  accountId           String           @db.Uuid
+  productId           String           @db.Uuid
+  kind                CreditBucketKind
+  grantedMilli        BigInt
+  remainingMilli      BigInt // материализация
+  expiresAt           DateTime?
+  expiredAt           DateTime? // сожжена воркером
+  creditRateVersionId String           @db.Uuid
+  sourceType          String // 'subscription' | 'plan_grant' | 'purchase' | 'promotion' | 'referral_reward' | 'manual'
+  sourceId            String
+  periodStart         DateTime?
+  createdAt           DateTime         @default(now())
+
+  account           BillingAccount      @relation(fields: [accountId], references: [id])
+  product           Product             @relation(fields: [productId], references: [id])
+  creditRateVersion CreditRateVersion   @relation(fields: [creditRateVersionId], references: [id])
+  ledgerEntries     CreditLedgerEntry[]
+  purchase          Purchase?
+
+  @@index([accountId, productId, expiresAt])
+}
+
+/// Только дописывается.
+/// RAW: UNIQUE NULLS NOT DISTINCT (productId, operationKey, bucketId, reason)
+model CreditLedgerEntry {
+  id           String       @id @default(uuid(7)) @db.Uuid
+  accountId    String       @db.Uuid
+  productId    String       @db.Uuid
+  bucketId     String?      @db.Uuid // NULL для debt
+  amountMilli  BigInt // +/-
+  reason       LedgerReason
+  operationKey String
+  actorId      String?      @db.Uuid // мягкая ссылка на Identity
+  usageEventId String?      @db.Uuid // мягкая ссылка (инвариант 12)
+  paymentId    String?      @db.Uuid
+  holdId       String?      @db.Uuid
+  meta         Json         @default("{}")
+  createdAt    DateTime     @default(now())
+
+  account BillingAccount @relation(fields: [accountId], references: [id])
+  product Product        @relation(fields: [productId], references: [id])
+  bucket  CreditBucket?  @relation(fields: [bucketId], references: [id])
+  payment Payment?       @relation(fields: [paymentId], references: [id])
+  hold    CreditHold?    @relation(fields: [holdId], references: [id])
+
+  @@index([accountId, productId, createdAt])
+  @@index([bucketId])
+}
+
+model CreditHold {
+  id             String     @id @default(uuid(7)) @db.Uuid
+  accountId      String     @db.Uuid
+  productId      String     @db.Uuid
+  actorId        String?    @db.Uuid
+  featureId      String     @db.Uuid
+  routeId        String?    @db.Uuid
+  amountMilli    BigInt
+  committedMilli BigInt     @default(0)
+  priceVersionId String?    @db.Uuid // RoutePriceVersion или FeaturePrice, по которой оценка
+  kind           HoldKind   @default(hold)
+  status         HoldStatus @default(open)
+  expiresAt      DateTime
+  closedAt       DateTime?
+  idempotencyKey String
+  createdAt      DateTime   @default(now())
+
+  account       BillingAccount      @relation(fields: [accountId], references: [id])
+  product       Product             @relation(fields: [productId], references: [id])
+  feature       ProductFeature      @relation(fields: [featureId], references: [id])
+  ledgerEntries CreditLedgerEntry[]
+
+  @@unique([productId, idempotencyKey])
+  @@index([status, expiresAt])
+  @@index([accountId, productId, status])
+}
+
+// ============================================================================
+// Метеринг и цены моделей (§10)
+// ============================================================================
+
+/// Без FK (инвариант 12); готова к партиционированию по occurredAt.
+model UsageEvent {
+  id                    String      @id @default(uuid(7)) @db.Uuid
+  accountId             String      @db.Uuid
+  productId             String      @db.Uuid
+  actorId               String?     @db.Uuid
+  holdId                String?     @db.Uuid
+  featureId             String      @db.Uuid
+  routeId               String?     @db.Uuid
+  provider              String
+  model                 String
+  meters                Json
+  inputTokens           BigInt      @default(0)
+  outputTokens          BigInt      @default(0)
+  costNanos             BigInt
+  priceVersionId        String?     @db.Uuid
+  markupPolicyVersionId String?     @db.Uuid
+  creditRateVersionId   String?     @db.Uuid
+  featurePriceId        String?     @db.Uuid
+  creditsChargedMilli   BigInt      @default(0)
+  status                UsageStatus
+  byok                  Boolean     @default(false)
+  idempotencyKey        String
+  traceId               String?
+  rawUsage              Json?
+  occurredAt            DateTime
+  createdAt             DateTime    @default(now())
+
+  @@unique([productId, idempotencyKey])
+  @@index([accountId, productId, occurredAt])
+  @@index([provider, occurredAt])
+  @@index([featureId, occurredAt])
+}
+
+model ModelRoute {
+  id        String         @id @default(uuid(7)) @db.Uuid
+  provider  String
+  model     String
+  kind      ModelRouteKind
+  isBatch   Boolean        @default(false)
+  createdAt DateTime       @default(now())
+
+  priceVersions RoutePriceVersion[]
+  features      ProductFeature[]
+
+  @@unique([provider, model, isBatch])
+}
+
+model RoutePriceVersion {
+  id            String             @id @default(uuid(7)) @db.Uuid
+  routeId       String             @db.Uuid
+  version       Int
+  status        PriceVersionStatus @default(draft)
+  effectiveFrom DateTime
+  effectiveTo   DateTime?
+  source        PriceVersionSource
+  approvedBy    String?            @db.Uuid // Identity сотрудника
+  publishedAt   DateTime?
+  createdAt     DateTime           @default(now())
+
+  route ModelRoute       @relation(fields: [routeId], references: [id])
+  items RoutePriceItem[]
+
+  @@unique([routeId, version])
+  @@index([routeId, effectiveFrom])
+}
+
+model RoutePriceItem {
+  id               String  @id @default(uuid(7)) @db.Uuid
+  priceVersionId   String  @db.Uuid
+  meter            String // 'input_tokens', 'audio_seconds', ...
+  unitNanos        BigInt
+  per              BigInt  @default(1) // 1 | 1_000_000 ...
+  /// { fromContextTokens: 200000 } и т. п.
+  tier             Json?
+  minBillableUnits BigInt?
+
+  priceVersion RoutePriceVersion @relation(fields: [priceVersionId], references: [id], onDelete: Cascade)
+
+  @@index([priceVersionId, meter])
+}
+
+// ============================================================================
+// Подписки и платежи (§12)
+// ============================================================================
+
+model Subscription {
+  id                     String             @id @default(uuid(7)) @db.Uuid
+  accountId              String             @db.Uuid
+  planVersionId          String             @db.Uuid
+  offerId                String?            @db.Uuid
+  source                 PaymentSource
+  externalSubscriptionId String
+  externalCustomerId     String?
+  status                 SubscriptionStatus
+  currentPeriodStart     DateTime
+  currentPeriodEnd       DateTime
+  trialEndsAt            DateTime?
+  cancelAtPeriodEnd      Boolean            @default(false)
+  quantity               Int                @default(1)
+  /// исходный магазин для revenuecat ('app_store' | 'play_store')
+  store                  String?
+  lastSyncedAt           DateTime?
+  version                Int                @default(0)
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+
+  account     BillingAccount @relation(fields: [accountId], references: [id])
+  planVersion PlanVersion    @relation(fields: [planVersionId], references: [id])
+  offer       Offer?         @relation(fields: [offerId], references: [id])
+  payments    Payment[]
+
+  @@unique([source, externalSubscriptionId])
+  @@index([accountId, status])
+  @@index([status, currentPeriodEnd])
+}
+
+model Purchase {
+  id                String         @id @default(uuid(7)) @db.Uuid
+  accountId         String         @db.Uuid
+  productId         String         @db.Uuid
+  creditPackOfferId String         @db.Uuid
+  source            PaymentSource
+  externalId        String
+  status            PurchaseStatus @default(pending)
+  bucketId          String?        @unique @db.Uuid
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  account         BillingAccount  @relation(fields: [accountId], references: [id])
+  product         Product         @relation(fields: [productId], references: [id])
+  creditPackOffer CreditPackOffer @relation(fields: [creditPackOfferId], references: [id])
+  bucket          CreditBucket?   @relation(fields: [bucketId], references: [id])
+  payments        Payment[]
+
+  @@unique([source, externalId])
+}
+
+model Payment {
+  id             String        @id @default(uuid(7)) @db.Uuid
+  accountId      String        @db.Uuid
+  subscriptionId String?       @db.Uuid
+  purchaseId     String?       @db.Uuid
+  source         PaymentSource
+  externalId     String
+  kind           PaymentKind
+  status         PaymentStatus
+  currency       String        @db.Char(3)
+  grossMicros    BigInt
+  taxMicros      BigInt        @default(0)
+  feeMicros      BigInt        @default(0)
+  discountMicros BigInt        @default(0)
+  netMicros      BigInt
+  grossUsdMicros BigInt
+  netUsdMicros   BigInt
+  fxRate         Decimal       @db.Decimal(20, 10)
+  fxSource       String
+  netIsEstimated Boolean       @default(false)
+  refundedMicros BigInt        @default(0) // материализация Σ PaymentRefund
+  occurredAt     DateTime
+  createdAt      DateTime      @default(now())
+
+  account       BillingAccount      @relation(fields: [accountId], references: [id])
+  subscription  Subscription?       @relation(fields: [subscriptionId], references: [id])
+  purchase      Purchase?           @relation(fields: [purchaseId], references: [id])
+  refunds       PaymentRefund[]
+  ledgerEntries CreditLedgerEntry[]
+
+  @@unique([source, externalId])
+  @@index([accountId, occurredAt])
+  @@index([subscriptionId])
+}
+
+/// Только дописывается
+model PaymentRefund {
+  id              String        @id @default(uuid(7)) @db.Uuid
+  paymentId       String        @db.Uuid
+  source          PaymentSource
+  externalId      String
+  kind            RefundKind
+  amountMicros    BigInt
+  amountUsdMicros BigInt
+  occurredAt      DateTime
+  createdAt       DateTime      @default(now())
+
+  payment Payment @relation(fields: [paymentId], references: [id])
+
+  @@unique([source, externalId])
+}
+
+/// Тариф без оплаты: free, акция, реферал, бета (§6.2, §13.3)
+model PlanGrant {
+  id            String          @id @default(uuid(7)) @db.Uuid
+  accountId     String          @db.Uuid
+  productId     String          @db.Uuid
+  planVersionId String          @db.Uuid
+  source        PlanGrantSource
+  sourceId      String?
+  startsAt      DateTime
+  endsAt        DateTime? // null = бессрочно
+  status        GrantStatus     @default(active)
+  createdAt     DateTime        @default(now())
+
+  account     BillingAccount @relation(fields: [accountId], references: [id])
+  product     Product        @relation(fields: [productId], references: [id])
+  planVersion PlanVersion    @relation(fields: [planVersionId], references: [id])
+
+  @@index([accountId, productId, status])
+}
+
+// ============================================================================
+// Рефералы (§13, этап 4). ReferralCommission / PartnerPayout — позже (§13.4).
+// ============================================================================
+
+model Partner {
+  id        String      @id @default(uuid(7)) @db.Uuid
+  accountId String      @unique @db.Uuid
+  tier      PartnerTier @default(user)
+  createdAt DateTime    @default(now())
+
+  account BillingAccount @relation(fields: [accountId], references: [id])
+  codes   ReferralCode[]
+}
+
+model ReferralProgram {
+  id           String                @id @default(uuid(7)) @db.Uuid
+  productScope String[]
+  termsVersion Int
+  rules        Json
+  status       ReferralProgramStatus @default(draft)
+  createdAt    DateTime              @default(now())
+
+  codes     ReferralCode[]
+  referrals Referral[]
+
+  @@unique([productScope, termsVersion])
+}
+
+model ReferralCode {
+  id         String    @id @default(uuid(7)) @db.Uuid
+  partnerId  String    @db.Uuid
+  programId  String    @db.Uuid
+  code       String    @unique
+  createdAt  DateTime  @default(now())
+  disabledAt DateTime?
+
+  partner   Partner         @relation(fields: [partnerId], references: [id])
+  program   ReferralProgram @relation(fields: [programId], references: [id])
+  clicks    ReferralClick[]
+  referrals Referral[]
+}
+
+/// Только хэш посетителя (§20)
+model ReferralClick {
+  id          String   @id @default(uuid(7)) @db.Uuid
+  codeId      String   @db.Uuid
+  visitorHash String
+  createdAt   DateTime @default(now())
+
+  code ReferralCode @relation(fields: [codeId], references: [id])
+
+  @@index([codeId, createdAt])
+}
+
+model Referral {
+  id                String         @id @default(uuid(7)) @db.Uuid
+  codeId            String         @db.Uuid
+  programId         String         @db.Uuid
+  termsVersion      Int // версия условий на реферале (§13.4)
+  referredAccountId String         @db.Uuid
+  productId         String         @db.Uuid // продукт атрибуции
+  status            ReferralStatus @default(attributed)
+  attributedAt      DateTime       @default(now())
+  convertedAt       DateTime?
+
+  code            ReferralCode     @relation(fields: [codeId], references: [id])
+  program         ReferralProgram  @relation(fields: [programId], references: [id])
+  referredAccount BillingAccount   @relation("ReferredAccount", fields: [referredAccountId], references: [id])
+  product         Product          @relation(fields: [productId], references: [id])
+  rewards         ReferralReward[]
+
+  @@unique([referredAccountId, productId])
+}
+
+model ReferralReward {
+  id                String               @id @default(uuid(7)) @db.Uuid
+  referralId        String               @db.Uuid
+  referrerAccountId String               @db.Uuid
+  kind              ReferralRewardKind
+  productId         String               @db.Uuid
+  creditsMilli      BigInt?
+  planVersionId     String?              @db.Uuid
+  durationDays      Int?
+  trigger           ReferralTrigger
+  status            ReferralRewardStatus @default(pending)
+  availableAt       DateTime // холд против возвратов
+  idempotencyKey    String               @unique
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  referral        Referral       @relation(fields: [referralId], references: [id])
+  referrerAccount BillingAccount @relation(fields: [referrerAccountId], references: [id])
+  product         Product        @relation(fields: [productId], references: [id])
+  planVersion     PlanVersion?   @relation(fields: [planVersionId], references: [id])
+
+  @@index([status, availableAt])
+  @@index([referrerAccountId, createdAt])
+}
+
+// ============================================================================
+// Лимиты (§8.8)
+// ============================================================================
+
+/// Предохранители продукта / экземпляра
+model LimitPolicy {
+  id        String           @id @default(uuid(7)) @db.Uuid
+  productId String?          @db.Uuid
+  scope     LimitPolicyScope
+  window    LimitWindow
+  meter     LimitMeter
+  max       BigInt
+  action    LimitAction      @default(deny)
+  isActive  Boolean          @default(true)
+  createdAt DateTime         @default(now())
+
+  product Product? @relation(fields: [productId], references: [id])
+}
+
+// ============================================================================
+// Квоты (§14, этап 6)
+// ============================================================================
+
+model ProductQuotaKey {
+  id         String   @id @default(uuid(7)) @db.Uuid
+  productId  String   @db.Uuid
+  key        String // 'storage.bytes', 'seats', 'projects'
+  unit       String // 'bytes' | 'count'
+  /// { mode: 'deny'|'read_only', graceDays, retentionEvent? }
+  overPolicy Json
+  createdAt  DateTime @default(now())
+
+  product Product @relation(fields: [productId], references: [id])
+
+  @@unique([productId, key])
+}
+
+model QuotaUsage {
+  accountId  String    @db.Uuid
+  productId  String    @db.Uuid
+  key        String
+  value      BigInt
+  measuredAt DateTime
+  overSince  DateTime? // начало превышения (грейс)
+
+  account BillingAccount @relation(fields: [accountId], references: [id])
+  product Product        @relation(fields: [productId], references: [id])
+
+  @@id([accountId, productId, key])
+}
+
+model QuotaReservation {
+  id        String                 @id @default(uuid(7)) @db.Uuid
+  accountId String                 @db.Uuid
+  productId String                 @db.Uuid
+  key       String
+  amount    BigInt
+  status    QuotaReservationStatus @default(open)
+  expiresAt DateTime
+  createdAt DateTime               @default(now())
+
+  account BillingAccount @relation(fields: [accountId], references: [id])
+  product Product        @relation(fields: [productId], references: [id])
+
+  @@index([accountId, productId, key, status])
+  @@index([status, expiresAt])
+}
+
+model QuotaUsageSnapshot {
+  accountId String   @db.Uuid
+  productId String   @db.Uuid
+  key       String
+  day       DateTime @db.Date
+  value     BigInt
+  peak      BigInt
+
+  account BillingAccount @relation(fields: [accountId], references: [id])
+  product Product        @relation(fields: [productId], references: [id])
+
+  @@id([accountId, productId, key, day])
+}
+
+// ============================================================================
+// Служебные таблицы (§16.4)
+// ============================================================================
+
+model ProductApiKey {
+  id         String       @id @default(uuid(7)) @db.Uuid
+  productId  String       @db.Uuid
+  name       String?
+  keyHash    String       @unique // SHA-256
+  prefix     String
+  scopes     String[]
+  status     ApiKeyStatus @default(active)
+  lastUsedAt DateTime?
+  createdAt  DateTime     @default(now())
+  revokedAt  DateTime?
+
+  product Product @relation(fields: [productId], references: [id])
+
+  @@index([productId])
+}
+
+model ProductWebhookEndpoint {
+  id              String         @id @default(uuid(7)) @db.Uuid
+  productId       String         @db.Uuid
+  url             String
+  secretEncrypted String
+  events          String[]
+  status          EndpointStatus @default(active)
+  createdAt       DateTime       @default(now())
+
+  product Product @relation(fields: [productId], references: [id])
+}
+
+/// Исходящие события продуктам (§16.3)
+model OutboxEvent {
+  id            String       @id @default(uuid(7)) @db.Uuid
+  productId     String?      @db.Uuid
+  type          String
+  payload       Json
+  status        OutboxStatus @default(pending)
+  attempts      Int          @default(0)
+  nextAttemptAt DateTime     @default(now())
+  deliveredAt   DateTime?
+  lastError     String?
+  createdAt     DateTime     @default(now())
+
+  product Product? @relation(fields: [productId], references: [id])
+
+  @@index([status, nextAttemptAt])
+}
+
+/// Inbox вебхуков источников оплаты (§11.5)
+model BillingWebhookEvent {
+  id              String        @id @default(uuid(7)) @db.Uuid
+  source          PaymentSource
+  externalEventId String
+  type            String?
+  payload         Json
+  status          InboxStatus   @default(received)
+  attempts        Int           @default(0)
+  processedAt     DateTime?
+  error           String?
+  receivedAt      DateTime      @default(now())
+
+  @@unique([source, externalEventId])
+  @@index([status, receivedAt])
+}
+
+model EntitlementOverride {
+  id        String    @id @default(uuid(7)) @db.Uuid
+  accountId String    @db.Uuid
+  productId String    @db.Uuid
+  key       String
+  value     Json
+  reason    String
+  createdBy String    @db.Uuid // Identity сотрудника
+  expiresAt DateTime?
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  account BillingAccount @relation(fields: [accountId], references: [id])
+  product Product        @relation(fields: [productId], references: [id])
+
+  @@index([accountId, productId])
+}
+
+model LimitOverride {
+  id        String    @id @default(uuid(7)) @db.Uuid
+  accountId String    @db.Uuid
+  productId String    @db.Uuid
+  rule      Json // LimitRule
+  reason    String
+  createdBy String    @db.Uuid
+  expiresAt DateTime?
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  account BillingAccount @relation(fields: [accountId], references: [id])
+  product Product        @relation(fields: [productId], references: [id])
+
+  @@index([accountId, productId])
+}
+
+model StaffRole {
+  identityId String        @db.Uuid
+  role       StaffRoleKind
+  createdAt  DateTime      @default(now())
+
+  identity Identity @relation(fields: [identityId], references: [id])
+
+  @@id([identityId, role])
+}
+
+model AdminAuditLog {
+  id              String   @id @default(uuid(7)) @db.Uuid
+  actorIdentityId String   @db.Uuid
+  action          String
+  targetType      String
+  targetId        String
+  before          Json?
+  after           Json?
+  createdAt       DateTime @default(now())
+
+  actor Identity @relation(fields: [actorIdentityId], references: [id])
+
+  @@index([targetType, targetId])
+  @@index([createdAt])
+}
+
+model MailOutbox {
+  id            String       @id @default(uuid(7)) @db.Uuid
+  to            String
+  template      String
+  data          Json
+  status        OutboxStatus @default(pending)
+  attempts      Int          @default(0)
+  nextAttemptAt DateTime     @default(now())
+  sentAt        DateTime?
+  lastError     String?
+  createdAt     DateTime     @default(now())
+
+  @@index([status, nextAttemptAt])
 }
