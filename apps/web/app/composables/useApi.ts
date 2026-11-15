@@ -16,6 +16,8 @@ export function useApi() {
       query?: Record<string, unknown>;
     } = {},
   ): Promise<T> {
+    const auth = useAuthStore();
+    const version = auth.generation;
     let data: unknown;
     try {
       data = await $fetch(path, {
@@ -25,7 +27,15 @@ export function useApi() {
         query: options.query,
       });
     } catch (cause) {
-      throw toApiError(cause);
+      const error = toApiError(cause);
+      if (
+        error.status === 401 &&
+        auth.isSignedIn &&
+        version === auth.generation
+      ) {
+        await auth.signOut();
+      }
+      throw error;
     }
     const parsed = schema.safeParse(data);
     if (!parsed.success) throw new ApiError("INVALID_RESPONSE");

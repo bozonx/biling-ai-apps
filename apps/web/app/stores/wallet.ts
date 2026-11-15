@@ -26,29 +26,36 @@ export const useWalletStore = defineStore("wallet", {
   },
   actions: {
     async fetchWallet() {
+      const auth = useAuthStore();
+      const version = auth.generation;
       this.walletLoading = true;
       this.walletError = null;
       try {
-        this.wallet = await useApi().get("/me/wallet", walletSchema);
+        const result = await useApi().get("/me/wallet", walletSchema);
+        if (version !== auth.generation) return;
+        this.wallet = result;
       } catch (error) {
+        if (version !== auth.generation) return;
         this.walletError = error;
       } finally {
-        this.walletLoading = false;
+        if (version === auth.generation) this.walletLoading = false;
       }
     },
     async fetchOperations() {
+      const auth = useAuthStore();
+      const version = auth.generation;
       this.operationsLoading = true;
       this.operationsError = null;
       try {
-        this.operations = await useApi().get(
-          "/me/operations",
-          operationsSchema,
-        );
+        const result = await useApi().get("/me/operations", operationsSchema);
+        if (version !== auth.generation) return;
+        this.operations = result;
         this.operationsLoaded = true;
       } catch (error) {
+        if (version !== auth.generation) return;
         this.operationsError = error;
       } finally {
-        this.operationsLoading = false;
+        if (version === auth.generation) this.operationsLoading = false;
       }
     },
     refresh() {

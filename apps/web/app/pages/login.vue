@@ -7,7 +7,8 @@ const config = useRuntimeConfig();
 const auth = useAuthStore();
 const route = useRoute();
 const loading = ref(false);
-const error = ref<unknown>(null);
+const error = computed(() => signInError.value ?? auth.restoreError);
+const signInError = ref<unknown>(null);
 const devEnabled = computed(() => config.public.devLoginEnabled === true);
 
 function redirectTarget() {
@@ -19,14 +20,24 @@ function redirectTarget() {
     : "/";
 }
 
+async function retryRestore() {
+  loading.value = true;
+  try {
+    await auth.resolve(true);
+    if (auth.isSignedIn) await navigateTo(redirectTarget());
+  } finally {
+    loading.value = false;
+  }
+}
+
 async function signInDev() {
   loading.value = true;
-  error.value = null;
+  signInError.value = null;
   try {
     await auth.signInDev();
     await navigateTo(redirectTarget());
   } catch (cause) {
-    error.value = cause;
+    signInError.value = cause;
   } finally {
     loading.value = false;
   }
@@ -41,6 +52,13 @@ async function signInDev() {
       </h1>
       <p class="text-sm text-muted">{{ t("auth.signInDescription") }}</p>
     </div>
+
+    <AppErrorState
+      v-if="auth.restoreError"
+      :error="auth.restoreError"
+      :retrying="loading"
+      @retry="retryRestore"
+    />
 
     <UButton
       block
@@ -71,7 +89,7 @@ async function signInDev() {
     </template>
 
     <UAlert
-      v-if="error"
+      v-if="error && !auth.restoreError"
       color="error"
       variant="subtle"
       icon="i-lucide-circle-alert"

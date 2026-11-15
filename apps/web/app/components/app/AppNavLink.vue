@@ -14,6 +14,7 @@ const active = computed(() => isNavActive(route.path, props.item.to));
   >
     <NuxtLink
       :to="item.to"
+      :aria-label="t(item.label)"
       class="flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium transition-colors"
       :class="[
         active

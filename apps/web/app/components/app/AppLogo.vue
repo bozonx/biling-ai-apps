@@ -6,6 +6,7 @@ const config = useRuntimeConfig();
 <template>
   <NuxtLink
     to="/"
+    :aria-label="config.public.appName"
     class="flex min-w-0 items-center gap-2 font-semibold text-highlighted"
   >
     <span

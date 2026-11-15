@@ -30,6 +30,8 @@ export const useAuthStore = defineStore("auth", () => {
   const account = ref<AccountContext | null>(null);
   const method = ref<SignInMethod | null>(null);
   const resolved = ref(false);
+  const restoreError = ref<unknown>(null);
+  const generation = ref(0);
   let pending: Promise<AccountContext | null> | null = null;
 
   const isSignedIn = computed(() => account.value !== null);
@@ -49,20 +51,29 @@ export const useAuthStore = defineStore("auth", () => {
   /** Restores the session once per app load; later calls reuse the answer. */
   function resolve(force = false): Promise<AccountContext | null> {
     if (resolved.value && !force) return Promise.resolve(account.value);
-    pending ??= (async () => {
+    pending ??= Promise.resolve().then(async () => {
+      const version = generation.value;
+      restoreError.value = null;
       method.value = readMethod();
       try {
-        account.value = method.value ? await fetchAccount() : null;
-      } catch {
+        const result = method.value ? await fetchAccount() : null;
+        if (version === generation.value) account.value = result;
+      } catch (cause) {
+        if (version !== generation.value) return null;
         account.value = null;
-        method.value = null;
-        writeMethod(null);
+        const error = toApiError(cause);
+        if ([401, 403, 404].includes(error.status ?? 0)) {
+          method.value = null;
+          writeMethod(null);
+        } else {
+          restoreError.value = error;
+        }
       } finally {
         resolved.value = true;
         pending = null;
       }
       return account.value;
-    })();
+    });
     return pending;
   }
 
@@ -74,6 +85,8 @@ export const useAuthStore = defineStore("auth", () => {
   }
 
   async function signOut() {
+    generation.value++;
+    restoreError.value = null;
     account.value = null;
     method.value = null;
     writeMethod(null);
@@ -81,5 +94,15 @@ export const useAuthStore = defineStore("auth", () => {
     await navigateTo("/login");
   }
 
-  return { account, method, resolved, isSignedIn, resolve, signInDev, signOut };
+  return {
+    account,
+    method,
+    resolved,
+    restoreError,
+    generation,
+    isSignedIn,
+    resolve,
+    signInDev,
+    signOut,
+  };
 });

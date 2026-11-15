@@ -21,15 +21,15 @@ const items = computed(() =>
     <div
       v-if="variant === 'buttons'"
       class="flex flex-wrap gap-2"
-      role="radiogroup"
+      role="group"
+      :aria-label="t('theme.title')"
     >
       <UButton
         v-for="option in options"
         :key="option.value"
         :icon="option.icon"
         :label="option.label"
-        role="radio"
-        :aria-checked="preference === option.value"
+        :aria-pressed="preference === option.value"
         :color="preference === option.value ? 'primary' : 'neutral'"
         :variant="preference === option.value ? 'solid' : 'outline'"
         @click="preference = option.value"
