@@ -32,3 +32,11 @@ export const operationSchema = z.object({
   createdAt: z.iso.datetime(),
 });
 export const operationsSchema = z.array(operationSchema);
+
+export const accountContextSchema = z.object({
+  accountId: z.uuid(),
+  productId: z.uuid(),
+});
+export type AccountContext = z.infer<typeof accountContextSchema>;
+export type Wallet = z.infer<typeof walletSchema>;
+export type Operation = z.infer<typeof operationSchema>;

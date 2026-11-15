@@ -1,4 +1,105 @@
 {
-  "title": "Billing AI",
-  "intro": "Billing portal infrastructure is ready for development."
+  "common": {
+    "refresh": "Refresh",
+    "retry": "Retry",
+    "viewAll": "View all",
+    "noData": "No data",
+    "copy": "Copy",
+    "copied": "Copied",
+    "goHome": "Go home"
+  },
+  "nav": {
+    "menu": "Menu",
+    "openMenu": "Open menu",
+    "toggleSidebar": "Collapse or expand menu",
+    "dashboard": "Overview",
+    "operations": "Operations",
+    "settings": "Settings"
+  },
+  "theme": {
+    "title": "Theme",
+    "description": "System theme follows your device settings.",
+    "system": "System",
+    "light": "Light",
+    "dark": "Dark"
+  },
+  "language": {
+    "title": "Interface language",
+    "description": "Your choice is saved in this browser."
+  },
+  "auth": {
+    "signInTitle": "Sign in",
+    "signInDescription": "Credit balance and operation history",
+    "signInSso": "Sign in with single account",
+    "ssoUnavailable": "Single account sign-in is not connected yet",
+    "or": "or",
+    "signInDev": "Sign in as developer",
+    "devHint": "Local development only",
+    "devAccount": "Developer account",
+    "account": "Account",
+    "signOut": "Sign out"
+  },
+  "dashboard": {
+    "title": "Overview",
+    "description": "Credit wallet status",
+    "recentOperations": "Recent operations"
+  },
+  "wallet": {
+    "available": "Available",
+    "balance": "Balance",
+    "held": "Held",
+    "heldHint": "Reserved for requests in progress",
+    "debt": "Debt"
+  },
+  "operations": {
+    "title": "Operations",
+    "description": "Balance change history",
+    "kind": "Type",
+    "balanceAfter": "Balance after",
+    "debtAfter": "Debt after",
+    "createdAt": "Date",
+    "empty": "No operations yet",
+    "emptyDescription": "Credit grants and charges will appear here.",
+    "kinds": {
+      "accrual": "Accrual",
+      "purchase": "Purchase",
+      "grant": "Bonus",
+      "commit": "Charge",
+      "expiry": "Expiry",
+      "refund": "Refund",
+      "revoke": "Revoke",
+      "adjustment": "Adjustment"
+    }
+  },
+  "settings": {
+    "title": "Settings",
+    "description": "Appearance and account details",
+    "appearance": {
+      "title": "Appearance",
+      "description": "Theme and interface language"
+    },
+    "account": {
+      "title": "Account",
+      "description": "Current sign-in details",
+      "details": "Details",
+      "signInMethod": "Sign-in method",
+      "accountId": "Account ID",
+      "productId": "Product ID",
+      "signOutDescription": "End the session in this browser."
+    }
+  },
+  "errors": {
+    "title": "Something went wrong",
+    "UNKNOWN": "Unknown error. Please try again.",
+    "INVALID_REQUEST": "Invalid request.",
+    "UNAUTHORIZED": "Access denied. Please sign in again.",
+    "NOT_FOUND": "Data not found.",
+    "NETWORK_ERROR": "Server unavailable. Check your connection.",
+    "INVALID_RESPONSE": "The server returned an unexpected response.",
+    "SERVER_ERROR": "Server error. Please try later.",
+    "DEV_LOGIN_UNAVAILABLE": "Developer sign-in is disabled on the server.",
+    "COPY_FAILED": "Could not copy",
+    "pageNotFound": "Page not found",
+    "pageNotFoundDescription": "The link may be outdated or the address mistyped."
+  }
 }
