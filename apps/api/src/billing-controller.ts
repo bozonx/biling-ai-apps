@@ -5,16 +5,21 @@ import {
   Headers,
   Inject,
   Param,
+  Query,
   Post,
   UnauthorizedException,
   ForbiddenException,
   BadRequestException,
 } from "@nestjs/common";
 import { createHash } from "node:crypto";
+import { walletSchema, operationsSchema } from "@billing/contracts";
 import { z } from "zod";
 import { Database } from "./database.js";
 import { WalletService } from "./wallet.js";
-const amount = z.string().regex(/^[1-9][0-9]{0,29}$/);
+const amount = z
+  .string()
+  .regex(/^[1-9][0-9]{0,18}$/)
+  .refine((value) => BigInt(value) <= 9223372036854775807n);
 const grantSchema = z
   .object({
     accountId: z.uuid(),
@@ -74,8 +79,29 @@ export class BillingController {
     @Param("accountId") accountId: string,
   ) {
     const productId = await this.authorize(auth, "wallets:read");
-    return json(
-      await this.wallets.balance(parse(z.uuid(), accountId), productId),
+    return walletSchema.parse(
+      json(await this.wallets.balance(parse(z.uuid(), accountId), productId)),
+    );
+  }
+  @Get("wallets/:accountId/operations")
+  async history(
+    @Headers("authorization") auth: string | undefined,
+    @Param("accountId") accountId: string,
+    @Query("before") before?: string,
+  ) {
+    const productId = await this.authorize(auth, "wallets:read");
+    const cursor =
+      before === undefined
+        ? undefined
+        : parse(z.string().regex(/^[1-9][0-9]{0,18}$/), before);
+    return operationsSchema.parse(
+      json(
+        await this.wallets.history(
+          parse(z.uuid(), accountId),
+          productId,
+          cursor,
+        ),
+      ),
     );
   }
   @Post("credits/grant")

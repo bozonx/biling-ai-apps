@@ -1,3 +1,4 @@
+import { DevAccountController } from "./dev-account.js";
 import { Database } from "./database.js";
 import { WalletService } from "./wallet.js";
 import { BillingController } from "./billing-controller.js";
@@ -11,6 +12,11 @@ export class HealthController {
 }
 @Module({
   providers: [Database, WalletService],
-  controllers: [HealthController, EstimateController, BillingController],
+  controllers: [
+    HealthController,
+    EstimateController,
+    BillingController,
+    DevAccountController,
+  ],
 })
 export class AppModule {}

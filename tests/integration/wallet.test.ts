@@ -42,6 +42,24 @@ test("wallet transactions serialize reservations and preserve an append-only led
     await expect(
       service.grant(product.id, "grant-1", { ...input, amountMilli: "2000" }),
     ).rejects.toThrow();
+    await expect(
+      service.grant(product.id, "too-large", {
+        ...input,
+        amountMilli: "9223372036854775807",
+      }),
+    ).rejects.toThrow();
+    const expiring = await service.reserve(product.id, "expires", {
+      accountId: account.id,
+      featureId: feature.id,
+      amountMilli: "100",
+    });
+    await db.creditHold.update({
+      where: { id: expiring.id },
+      data: { expiresAt: new Date(0) },
+    });
+    await service.expireHolds();
+    expect((await service.balance(account.id, product.id)).heldMilli).toBe(0n);
+    expect(await service.history(account.id, product.id)).toHaveLength(1);
     const results = await Promise.allSettled(
       ["a", "b"].map((key) =>
         service.reserve(product.id, key, {

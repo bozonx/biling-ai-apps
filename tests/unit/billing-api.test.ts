@@ -13,7 +13,13 @@ test("S2S rejects missing keys and scopes and derives product exclusively from t
   const calls: unknown[][] = [];
   const balance = async (...args: unknown[]) => {
     calls.push(args);
-    return { balanceMilli: 123n };
+    return {
+      accountId: "019a85e0-1111-7111-8111-111111111111",
+      productId: "019a85e0-1111-7111-8111-111111111112",
+      balanceMilli: 123n,
+      heldMilli: 0n,
+      debtMilli: 0n,
+    };
   };
   const controller = new BillingController(
     { productApiKey: { findUnique: lookup } } as unknown as Database,
@@ -39,7 +45,7 @@ test("S2S rejects missing keys and scopes and derives product exclusively from t
     revokedAt: null,
     product: { status: "active" },
   };
-  expect(await controller.balance("Bearer secret", accountId)).toEqual({
+  expect(await controller.balance("Bearer secret", accountId)).toMatchObject({
     balanceMilli: "123",
   });
   expect(calls).toEqual([[accountId, "product"]]);

@@ -15,3 +15,20 @@ export const estimateRequestSchema = z
 export const estimateResponseSchema = z.object({
   creditsMilli: unsignedInteger,
 });
+
+export const walletSchema = z.object({
+  accountId: z.uuid(),
+  productId: z.uuid(),
+  balanceMilli: unsignedInteger,
+  heldMilli: unsignedInteger,
+  debtMilli: unsignedInteger,
+});
+export const operationSchema = z.object({
+  id: z.uuid(),
+  kind: z.string(),
+  walletSeq: unsignedInteger,
+  balanceAfterMilli: unsignedInteger,
+  debtAfterMilli: unsignedInteger,
+  createdAt: z.iso.datetime(),
+});
+export const operationsSchema = z.array(operationSchema);

@@ -18,6 +18,10 @@ export class WalletService {
   constructor(@Inject(Database) private readonly db: Database) {}
 
   private async lock(tx: Transaction, accountId: string, productId: string) {
+    const account = await tx.billingAccount.findUnique({
+      where: { id: accountId },
+    });
+    if (!account) throw new NotFoundException({ code: "ACCOUNT_NOT_FOUND" });
     await tx.creditWallet.upsert({
       where: { accountId_productId: { accountId, productId } },
       create: { accountId, productId },
@@ -26,6 +30,49 @@ export class WalletService {
     await tx.$queryRaw`SELECT "accountId" FROM "CreditWallet" WHERE "accountId" = ${accountId}::uuid AND "productId" = ${productId}::uuid FOR UPDATE`;
     return tx.creditWallet.findUniqueOrThrow({
       where: { accountId_productId: { accountId, productId } },
+    });
+  }
+
+  private sameGrant(
+    meta: unknown,
+    input: {
+      accountId: string;
+      amountMilli: string;
+      creditRateVersionId: string;
+    },
+  ) {
+    if (!meta || typeof meta !== "object") return false;
+    const value = meta as Record<string, unknown>;
+    return (
+      value.accountId === input.accountId &&
+      value.amountMilli === input.amountMilli &&
+      value.creditRateVersionId === input.creditRateVersionId
+    );
+  }
+
+  async expireHolds() {
+    const holds = await this.db.creditHold.findMany({
+      where: { status: "open", expiresAt: { lte: new Date() } },
+      take: 100,
+    });
+    for (const hold of holds) {
+      try {
+        await this.close(hold.productId, hold.id, "release");
+      } catch (error) {
+        if (!(error instanceof ConflictException)) throw error;
+      }
+    }
+  }
+
+  async history(accountId: string, productId: string, before?: string) {
+    return this.db.creditOperation.findMany({
+      where: {
+        accountId,
+        productId,
+        ...(before ? { walletSeq: { lt: BigInt(before) } } : {}),
+      },
+      orderBy: { walletSeq: "desc" },
+      take: 50,
     });
   }
 
@@ -54,7 +101,7 @@ export class WalletService {
       if (prior) {
         if (
           prior.accountId !== input.accountId ||
-          JSON.stringify(prior.meta) !== JSON.stringify(input)
+          !this.sameGrant(prior.meta, input)
         )
           fail("IDEMPOTENCY_CONFLICT");
         return prior;
@@ -70,6 +117,8 @@ export class WalletService {
       if (!rate) fail("INVALID_CREDIT_RATE");
       if (wallet.debtMilli > 0n) fail("DEBT_REPAYMENT_REQUIRED");
       const amount = BigInt(input.amountMilli);
+      if (amount > 9223372036854775807n - wallet.balanceMilli)
+        fail("AMOUNT_OUT_OF_RANGE");
       const operation = await tx.creditOperation.create({
         data: {
           accountId: input.accountId,
