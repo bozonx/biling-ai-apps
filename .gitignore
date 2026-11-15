@@ -147,3 +147,13 @@ vite.config.ts.timestamp-*
 
 # Turbo Repo
 .turbo
+
+node_modules/
+.env
+.nuxt/
+.output/
+dist/
+.turbo/
+apps/api/src/generated/
+playwright-report/
+test-results/

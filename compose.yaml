@@ -1,0 +1,49 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: billing
+      POSTGRES_PASSWORD: billing
+      POSTGRES_DB: billing
+    ports: ["127.0.0.1:5432:5432"]
+    volumes: ["postgres:/var/lib/postgresql"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U billing"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+  redis:
+    image: redis:8-alpine
+    ports: ["127.0.0.1:6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+  api:
+    build: .
+    profiles: [app]
+    environment:
+      DATABASE_URL: postgresql://billing:billing@postgres:5432/billing
+      REDIS_HOST: redis
+    ports: ["127.0.0.1:3001:3001"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+  worker:
+    build: .
+    profiles: [app]
+    command: ["pnpm", "--filter", "@billing/api", "worker"]
+    environment:
+      DATABASE_URL: postgresql://billing:billing@postgres:5432/billing
+      REDIS_HOST: redis
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+  gateway:
+    build: .
+    profiles: [app]
+    command: ["pnpm", "--filter", "@billing/gateway", "start"]
+    ports: ["127.0.0.1:3002:3002"]
+volumes:
+  postgres:

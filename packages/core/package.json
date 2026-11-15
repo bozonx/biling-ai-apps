@@ -1,0 +1,6 @@
+{
+  "name": "@billing/core",
+  "private": true,
+  "main": "src/index.ts",
+  "dependencies": {}
+}

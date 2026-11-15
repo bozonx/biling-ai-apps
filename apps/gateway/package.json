@@ -1,0 +1,22 @@
+{
+  "name": "@billing/gateway",
+  "private": true,
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/apps/gateway/src/main.js"
+  },
+  "dependencies": {
+    "@nestjs/common": "catalog:",
+    "@nestjs/core": "catalog:",
+    "@nestjs/platform-fastify": "catalog:",
+    "@nestjs/config": "catalog:",
+    "@nestjs/bullmq": "catalog:",
+    "bullmq": "catalog:",
+    "ioredis": "catalog:",
+    "fastify": "catalog:",
+    "@fastify/helmet": "catalog:",
+    "reflect-metadata": "catalog:",
+    "rxjs": "catalog:"
+  }
+}

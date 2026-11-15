@@ -1,0 +1,9 @@
+node_modules
+pnpm-lock.yaml
+**/generated
+**/.nuxt
+**/.output
+**/dist
+dev_docs
+playwright-report
+test-results
