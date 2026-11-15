@@ -869,27 +869,29 @@ model CreditLedgerEntry {
 /// RAW: CHECK (amountMilli > 0 AND committedMilli >= 0)
 /// RAW: CHECK (routePriceVersionId IS NULL OR featurePriceId IS NULL)
 model CreditHold {
-  id                  String     @id @default(uuid(7)) @db.Uuid
-  accountId           String     @db.Uuid
-  productId           String     @db.Uuid
-  actorId             String?    @db.Uuid
-  featureId           String?    @db.Uuid
-  routeId             String?    @db.Uuid
-  amountMilli         BigInt
-  committedMilli      BigInt     @default(0)
+  creditRateVersionId   String?    @db.Uuid
+  markupPolicyVersionId String?    @db.Uuid
+  id                    String     @id @default(uuid(7)) @db.Uuid
+  accountId             String     @db.Uuid
+  productId             String     @db.Uuid
+  actorId               String?    @db.Uuid
+  featureId             String?    @db.Uuid
+  routeId               String?    @db.Uuid
+  amountMilli           BigInt
+  committedMilli        BigInt     @default(0)
   /// цена, по которой сделана оценка: маршрута или фиксированная
-  routePriceVersionId String?    @db.Uuid
-  featurePriceId      String?    @db.Uuid
-  kind                HoldKind   @default(hold)
-  status              HoldStatus @default(open)
-  expiresAt           DateTime   @db.Timestamptz(3)
-  closedAt            DateTime?  @db.Timestamptz(3)
-  idempotencyKey      String
+  routePriceVersionId   String?    @db.Uuid
+  featurePriceId        String?    @db.Uuid
+  kind                  HoldKind   @default(hold)
+  status                HoldStatus @default(open)
+  expiresAt             DateTime   @db.Timestamptz(3)
+  closedAt              DateTime?  @db.Timestamptz(3)
+  idempotencyKey        String
   /// окна лимитов, в которых резерв занял `reserved`: [{ scopeKey, windowStart, meter, amount }]
   /// — по ним release/expire возвращают ровно то, что заняли, даже если правила сменились
-  limitReservations   Json       @default("[]")
-  estimatedCostNanos  BigInt?
-  createdAt           DateTime   @default(now()) @db.Timestamptz(3)
+  limitReservations     Json       @default("[]")
+  estimatedCostNanos    BigInt?
+  createdAt             DateTime   @default(now()) @db.Timestamptz(3)
 
   account           BillingAccount     @relation(fields: [accountId], references: [id], onDelete: Restrict)
   product           Product            @relation(fields: [productId], references: [id], onDelete: Restrict)

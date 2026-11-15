@@ -19,7 +19,15 @@
     "reflect-metadata": "catalog:",
     "rxjs": "catalog:",
     "@billing/contracts": "workspace:*",
-    "zod": "catalog:"
+    "zod": "catalog:",
+    "@bozonx/ai-kit": "catalog:",
+    "@billing/client": "workspace:*",
+    "pg": "catalog:",
+    "@types/pg": "catalog:",
+    "@ai-sdk/openai": "catalog:",
+    "@ai-sdk/google": "catalog:",
+    "@ai-sdk/anthropic": "catalog:",
+    "@openrouter/ai-sdk-provider": "catalog:"
   },
   "type": "module"
 }

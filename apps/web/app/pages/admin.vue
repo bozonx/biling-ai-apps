@@ -11,6 +11,9 @@ const secret = ref("");
 const catalog = ref<Record<string, unknown[]>>({});
 const values = reactive<Record<string, string>>({});
 const definitions: Record<string, string[]> = {
+  route: ["provider", "model", "variant", "kind"],
+  productRoute: ["productId", "routeId"],
+  markup: ["productId", "version", "tiers", "minChargeMilli", "effectiveFrom"],
   limitPolicy: ["productId", "window", "meter", "max"],
   endVersion: ["id", "effectiveTo"],
   publish: ["target", "id", "effectiveFrom"],
@@ -35,7 +38,27 @@ const definitions: Record<string, string[]> = {
   credits: ["productId", "accountId", "amountMilli", "creditRateVersionId"],
 };
 const columns: Record<string, string[]> = {
-  routes: ["id", "key"],
+  tasks: ["id", "kind", "accountId", "status", "details"],
+  routes: ["id", "provider", "model", "variant", "kind"],
+  markups: [
+    "id",
+    "productId",
+    "version",
+    "tiers",
+    "minChargeMilli",
+    "effectiveFrom",
+    "publishedAt",
+  ],
+  productRoutes: ["productId", "routeId", "isActive"],
+  margin: [
+    "productId",
+    "routeId",
+    "provider",
+    "model",
+    "creditsChargedMilli",
+    "costNanos",
+    "requests",
+  ],
   routePrices: [
     "id",
     "routeId",
@@ -105,6 +128,24 @@ async function load() {
   error.value = "";
   try {
     catalog.value = (await request("catalog")) as Record<string, unknown[]>;
+    const rows = await $fetch<
+      {
+        productId: string;
+        routeId: string | null;
+        provider: string | null;
+        model: string | null;
+        _sum: { creditsChargedMilli: string | null; costNanos: string | null };
+        _count: number;
+      }[]
+    >("/api/v1/admin/margin", {
+      headers: { Authorization: `Bearer ${token.value}` },
+    });
+    catalog.value.margin = rows.map((row) => ({
+      ...row,
+      creditsChargedMilli: row._sum.creditsChargedMilli ?? "0",
+      costNanos: row._sum.costNanos ?? "0",
+      requests: row._count,
+    }));
   } catch {
     error.value = t("admin.failed");
   } finally {
@@ -126,7 +167,13 @@ async function save() {
               .split(",")
               .map((v) => v.trim())
               .filter(Boolean)
-          : ["creditGrants", "entitlements", "items", "limits"].includes(field)
+          : [
+                "creditGrants",
+                "entitlements",
+                "items",
+                "limits",
+                "tiers",
+              ].includes(field)
             ? JSON.parse(value)
             : value;
     }

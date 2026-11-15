@@ -1,3 +1,4 @@
+import { tiersSchema } from "./metering.js";
 import { WalletService } from "./wallet.js";
 import {
   Body,
@@ -29,6 +30,22 @@ const limitRule = z.object({
 });
 const actionSchema = z.discriminatedUnion("action", [
   z.object({
+    action: z.literal("route"),
+    provider: name,
+    model: name,
+    variant: name,
+    kind: z.enum(["llm", "stt", "tts", "image", "video", "mt", "embed"]),
+  }),
+  z.object({ action: z.literal("productRoute"), productId: id, routeId: id }),
+  z.object({
+    action: z.literal("markup"),
+    productId: id,
+    version: z.number().int().positive(),
+    tiers: tiersSchema,
+    minChargeMilli: z.string().regex(/^(0|[1-9][0-9]{0,18})$/),
+    effectiveFrom: z.iso.datetime(),
+  }),
+  z.object({
     action: z.literal("limitPolicy"),
     productId: id,
     window: limitRule.shape.window,
@@ -44,7 +61,7 @@ const actionSchema = z.discriminatedUnion("action", [
 
   z.object({
     action: z.literal("publish"),
-    target: z.enum(["version", "rate", "routePrice"]),
+    target: z.enum(["version", "rate", "routePrice", "markup"]),
     id,
     effectiveFrom: z.iso.datetime(),
   }),
@@ -56,7 +73,17 @@ const actionSchema = z.discriminatedUnion("action", [
     version: z.number().int().positive(),
     effectiveFrom: z.iso.datetime(),
     items: z
-      .array(z.object({ meter: name, unitNanos: amount, per: amount }))
+      .array(
+        z.object({
+          meter: name,
+          unitNanos: z.string().regex(/^(0|[1-9][0-9]{0,18})$/),
+          per: amount,
+          minBillableUnits: amount.optional(),
+          tier: z
+            .object({ fromContextTokens: z.number().int().nonnegative() })
+            .optional(),
+        }),
+      )
       .min(1),
   }),
   z.object({
@@ -150,6 +177,17 @@ export class AdminController {
       await this.wallets.grant(input.data.productId, key, input.data, actor),
     );
   }
+  @Get("margin")
+  async margin(@Headers("authorization") auth?: string) {
+    await this.staff.authorize(auth);
+    return json(
+      await this.db.usageEvent.groupBy({
+        by: ["productId", "routeId", "provider", "model"],
+        _sum: { creditsChargedMilli: true, costNanos: true },
+        _count: true,
+      }),
+    );
+  }
   @Get("catalog")
   async catalog(@Headers("authorization") auth?: string) {
     await this.staff.authorize(auth);
@@ -163,6 +201,9 @@ export class AdminController {
       keys,
       routes,
       routePrices,
+      markups,
+      productRoutes,
+      tasks,
     ] = await Promise.all([
       this.db.product.findMany({ take: 100, orderBy: { createdAt: "desc" } }),
       this.db.productFeature.findMany({ take: 100 }),
@@ -186,6 +227,9 @@ export class AdminController {
         take: 100,
         include: { items: true },
       }),
+      this.db.markupPolicyVersion.findMany({ take: 100 }),
+      this.db.productModelRoute.findMany({ take: 100 }),
+      this.db.adminTask.findMany({ take: 100, orderBy: { createdAt: "desc" } }),
     ]);
     return json({
       products,
@@ -197,6 +241,9 @@ export class AdminController {
       keys,
       routes,
       routePrices,
+      markups,
+      productRoutes,
+      tasks,
     });
   }
   @Post("catalog")
@@ -214,6 +261,40 @@ export class AdminController {
       let result: { id: string };
       let secret: string | undefined;
       switch (input.action) {
+        case "route":
+          result = await tx.modelRoute.create({
+            data: {
+              provider: input.provider,
+              model: input.model,
+              variant: input.variant,
+              kind: input.kind,
+            },
+          });
+          break;
+        case "productRoute":
+          await tx.productModelRoute.upsert({
+            where: {
+              productId_routeId: {
+                productId: input.productId,
+                routeId: input.routeId,
+              },
+            },
+            update: { isActive: true },
+            create: { productId: input.productId, routeId: input.routeId },
+          });
+          result = { id: input.routeId };
+          break;
+        case "markup":
+          result = await tx.markupPolicyVersion.create({
+            data: {
+              productId: input.productId,
+              version: input.version,
+              tiers: input.tiers,
+              minChargeMilli: BigInt(input.minChargeMilli),
+              effectiveFrom: new Date(input.effectiveFrom),
+            },
+          });
+          break;
         case "limitPolicy":
           result = await tx.limitPolicy.create({
             data: {
@@ -246,7 +327,9 @@ export class AdminController {
               ? await tx.planVersion.updateMany(args)
               : input.target === "rate"
                 ? await tx.creditRateVersion.updateMany(args)
-                : await tx.routePriceVersion.updateMany(args);
+                : input.target === "markup"
+                  ? await tx.markupPolicyVersion.updateMany(args)
+                  : await tx.routePriceVersion.updateMany(args);
           if (rows.count !== 1)
             throw new ConflictException({ code: "VERSION_NOT_DRAFT" });
           result = { id: input.id };
@@ -269,6 +352,10 @@ export class AdminController {
               items: {
                 create: input.items.map((item) => ({
                   ...item,
+                  minBillableUnits:
+                    item.minBillableUnits === undefined
+                      ? undefined
+                      : BigInt(item.minBillableUnits),
                   unitNanos: BigInt(item.unitNanos),
                   per: BigInt(item.per),
                 })),

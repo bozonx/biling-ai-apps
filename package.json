@@ -50,7 +50,12 @@
     "typescript": "catalog:",
     "typescript-eslint": "catalog:",
     "jose": "catalog:",
-    "fastify": "catalog:"
+    "fastify": "catalog:",
+    "nock": "catalog:",
+    "reflect-metadata": "catalog:",
+    "@nestjs/core": "catalog:",
+    "@nestjs/common": "catalog:",
+    "@nestjs/platform-fastify": "catalog:"
   },
   "type": "module"
 }

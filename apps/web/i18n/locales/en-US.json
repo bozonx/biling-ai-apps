@@ -126,7 +126,10 @@
       "publish": "Publish version",
       "revokeVersion": "Revoke plan version",
       "endVersion": "End version",
-      "limitPolicy": "Add product limit"
+      "limitPolicy": "Add product limit",
+      "route": "Create model route",
+      "productRoute": "Enable product route",
+      "markup": "Create markup policy"
     },
     "fields": {
       "code": "Code",
@@ -137,7 +140,7 @@
       "version": "Version number",
       "creditValueMicros": "Credit value, micro USD",
       "productScope": "Product codes, comma separated",
-      "kind": "Kind: base / addon",
+      "kind": "Kind",
       "planId": "Plan ID",
       "creditGrants": "Credits by product (JSON)",
       "entitlements": "Entitlements by product (JSON)",
@@ -158,13 +161,23 @@
       "effectiveFrom": "Effective from",
       "items": "Items (JSON)",
       "publishedAt": "Published at",
-      "target": "Version type (version, rate, routePrice)",
+      "target": "Version type (version, rate, routePrice, markup)",
       "effectiveTo": "Effective until",
       "limits": "Limits (JSON)",
       "revokedAt": "Revoked at",
       "window": "Window (minute, hour, day, month)",
       "meter": "Meter (requests, credits, cost_nanos)",
-      "max": "Maximum"
+      "max": "Maximum",
+      "provider": "Provider",
+      "model": "Model",
+      "variant": "Variant",
+      "tiers": "Markup tiers (JSON)",
+      "minChargeMilli": "Minimum, milli-credits",
+      "isActive": "Active",
+      "creditsChargedMilli": "Revenue, milli-credits",
+      "costNanos": "Cost, nano-USD",
+      "requests": "Requests",
+      "details": "Details"
     },
     "sections": {
       "products": "Products",
@@ -175,7 +188,11 @@
       "keys": "Keys",
       "prices": "Feature prices",
       "routes": "Routes",
-      "routePrices": "Route prices"
+      "routePrices": "Route prices",
+      "markups": "Markup policies",
+      "productRoutes": "Product routes",
+      "margin": "Revenue and cost",
+      "tasks": "Reconciliation tasks"
     }
   }
 }

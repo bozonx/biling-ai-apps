@@ -126,7 +126,10 @@
       "publish": "Опубликовать версию",
       "revokeVersion": "Отозвать версию тарифа",
       "endVersion": "Завершить действие версии",
-      "limitPolicy": "Добавить лимит продукта"
+      "limitPolicy": "Добавить лимит продукта",
+      "route": "Создать маршрут модели",
+      "productRoute": "Разрешить маршрут продукту",
+      "markup": "Создать политику наценки"
     },
     "fields": {
       "code": "Код",
@@ -137,7 +140,7 @@
       "version": "Номер версии",
       "creditValueMicros": "Стоимость кредита, микро USD",
       "productScope": "Коды продуктов через запятую",
-      "kind": "Тип: base / addon",
+      "kind": "Тип",
       "planId": "ID тарифа",
       "creditGrants": "Кредиты по продуктам (JSON)",
       "entitlements": "Права по продуктам (JSON)",
@@ -158,13 +161,23 @@
       "effectiveFrom": "Действует с",
       "items": "Позиции (JSON)",
       "publishedAt": "Опубликовано",
-      "target": "Тип версии (version, rate, routePrice)",
+      "target": "Тип версии (version, rate, routePrice, markup)",
       "effectiveTo": "Действует до",
       "limits": "Лимиты (JSON)",
       "revokedAt": "Отозвано",
       "window": "Окно (minute, hour, day, month)",
       "meter": "Счётчик (requests, credits, cost_nanos)",
-      "max": "Максимум"
+      "max": "Максимум",
+      "provider": "Провайдер",
+      "model": "Модель",
+      "variant": "Вариант",
+      "tiers": "Ступени наценки (JSON)",
+      "minChargeMilli": "Минимум, милли-кредиты",
+      "isActive": "Активен",
+      "creditsChargedMilli": "Выручка, милли-кредиты",
+      "costNanos": "Себестоимость, нано-USD",
+      "requests": "Запросы",
+      "details": "Подробности"
     },
     "sections": {
       "products": "Продукты",
@@ -175,7 +188,11 @@
       "keys": "API-ключи",
       "prices": "Цены функций",
       "routes": "Маршруты",
-      "routePrices": "Себестоимость"
+      "routePrices": "Себестоимость",
+      "markups": "Политики наценки",
+      "productRoutes": "Маршруты продуктов",
+      "margin": "Выручка и себестоимость",
+      "tasks": "Задачи сверки"
     }
   }
 }

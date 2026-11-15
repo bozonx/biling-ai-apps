@@ -85,6 +85,7 @@ export async function closeLimits(
   value: Prisma.JsonValue,
   commit: boolean,
   actual?: { credits: bigint; cost_nanos: bigint },
+  releaseReserved = true,
 ) {
   for (const reservation of value as Reservation[]) {
     await tx.limitUsageWindow.update({
@@ -96,7 +97,9 @@ export async function closeLimits(
         },
       },
       data: {
-        reserved: { decrement: BigInt(reservation.amount) },
+        reserved: {
+          decrement: releaseReserved ? BigInt(reservation.amount) : 0n,
+        },
         consumed: {
           increment: commit
             ? reservation.meter === "requests"

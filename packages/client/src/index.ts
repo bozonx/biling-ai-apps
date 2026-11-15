@@ -59,6 +59,59 @@ export class BillingClient {
       await this.read("/api/v1/s2s/holds", apiKey, input, idempotencyKey),
     );
   }
+  async reportDiscrepancy(holdId: string, apiKey: string, reason: string) {
+    return this.read(
+      `/api/v1/s2s/metering/${encodeURIComponent(holdId)}/discrepancy`,
+      apiKey,
+      { reason },
+    );
+  }
+  async reserveMetered(
+    input: {
+      accountId: string;
+      featureId: string;
+      routeId: string;
+      meters: Record<string, string>;
+      actorId?: string;
+    },
+    apiKey: string,
+    key: string,
+  ) {
+    const result = (await this.read(
+      "/api/v1/s2s/metering/reserve",
+      apiKey,
+      input,
+      key,
+    )) as {
+      hold: unknown;
+      route: {
+        id: string;
+        provider: string;
+        model: string;
+        variant: string;
+        kind: string;
+      };
+    };
+    return { hold: holdSchema.parse(result.hold), route: result.route };
+  }
+  async commitMetered(
+    holdId: string,
+    apiKey: string,
+    usage: {
+      meters: Record<string, string>;
+      providerCostNanos?: string;
+      rawUsage?: Record<string, unknown>;
+      status?: "ok" | "partial";
+    },
+  ) {
+    return holdSchema.parse(
+      await this.read(
+        `/api/v1/s2s/metering/${encodeURIComponent(holdId)}/commit`,
+        apiKey,
+        usage,
+      ),
+    );
+  }
   async commit(holdId: string, apiKey: string) {
     return holdSchema.parse(
       await this.read(

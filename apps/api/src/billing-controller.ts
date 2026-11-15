@@ -1,3 +1,4 @@
+import { metersSchema, meteredUsageSchema } from "./metering.js";
 import { json } from "./json.js";
 import {
   Body,
@@ -159,6 +160,81 @@ export class BillingController {
         productId,
         this.key(key),
         parse(grantSchema, body),
+      ),
+    );
+  }
+  @Post("metering/:holdId/discrepancy")
+  async discrepancy(
+    @Headers("authorization") auth: string | undefined,
+    @Param("holdId") holdId: string,
+    @Body() body: unknown,
+  ) {
+    const productId = await this.authorize(auth, "holds:write");
+    const input = parse(
+      z
+        .object({
+          reason: z.enum(["provider_outcome_unknown", "delivery_delayed"]),
+        })
+        .strict(),
+      body,
+    );
+    const hold = await this.db.creditHold.findFirst({
+      where: { id: parse(z.uuid(), holdId), productId },
+    });
+    if (!hold) throw new BadRequestException({ code: "HOLD_NOT_FOUND" });
+    return json(
+      await this.db.adminTask.upsert({
+        where: { dedupeKey: `gateway:${hold.id}` },
+        update: {},
+        create: {
+          kind: "gateway_reconciliation",
+          dedupeKey: `gateway:${hold.id}`,
+          accountId: hold.accountId,
+          details: { holdId: hold.id, reason: input.reason },
+        },
+      }),
+    );
+  }
+  @Post("metering/reserve")
+  async reserveMetered(
+    @Headers("authorization") auth: string | undefined,
+    @Headers("idempotency-key") key: string | undefined,
+    @Body() body: unknown,
+  ) {
+    const productId = await this.authorize(auth, "holds:write");
+    return json(
+      await this.wallets.reserveMetered(
+        productId,
+        this.key(key),
+        parse(
+          z
+            .object({
+              accountId: z.uuid(),
+              featureId: z.uuid(),
+              routeId: z.uuid(),
+              actorId: z.uuid().optional(),
+              meters: metersSchema,
+            })
+            .strict(),
+          body,
+        ),
+      ),
+    );
+  }
+  @Post("metering/:holdId/commit")
+  async commitMetered(
+    @Headers("authorization") auth: string | undefined,
+    @Param("holdId") holdId: string,
+    @Body() body: unknown,
+  ) {
+    const productId = await this.authorize(auth, "holds:write");
+    return json(
+      await this.wallets.close(
+        productId,
+        parse(z.uuid(), holdId),
+        "commit",
+        undefined,
+        parse(meteredUsageSchema, body),
       ),
     );
   }

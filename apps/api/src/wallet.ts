@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from "node:util";
+import { priceUsage, type MeteredUsage } from "./metering.js";
 import { reserveLimits, closeLimits } from "./limits.js";
 import { accrueGrants } from "./accrual.js";
 import { effectiveEntitlements } from "./entitlements.js";
@@ -282,6 +284,60 @@ export class WalletService {
     });
   }
 
+  async reserveMetered(
+    productId: string,
+    key: string,
+    input: {
+      accountId: string;
+      featureId: string;
+      routeId: string;
+      meters: Record<string, string>;
+      actorId?: string;
+    },
+  ) {
+    const snapshot = await this.db.$transaction(async (tx) => {
+      const access = await tx.productModelRoute.findUnique({
+        where: { productId_routeId: { productId, routeId: input.routeId } },
+      });
+      if (!access?.isActive) fail("ROUTE_UNAVAILABLE");
+      const rights = await effectiveEntitlements(
+        tx,
+        input.accountId,
+        productId,
+      );
+      if (
+        !satisfiesEntitlements(
+          rights.definitions,
+          rights.values,
+          access!.requires as Record<string, unknown>,
+        )
+      )
+        fail("ENTITLEMENT_DENIED");
+      const feature = await tx.productFeature.findFirst({
+        where: {
+          id: input.featureId,
+          productId,
+          pricing: "metered",
+          status: "active",
+        },
+      });
+      if (!feature) fail("FEATURE_UNAVAILABLE");
+      return priceUsage(tx, productId, input.routeId, input.meters, new Date());
+    });
+    const hold = await this.reserve(productId, key, {
+      accountId: input.accountId,
+      featureId: input.featureId,
+      actorId: input.actorId,
+      amountMilli: (snapshot.credits || 1n).toString(),
+      estimatedCostNanos: snapshot.cost.toString(),
+      routeId: input.routeId,
+      routePriceVersionId: snapshot.price.id,
+      creditRateVersionId: snapshot.rate.id,
+      markupPolicyVersionId: snapshot.markup.id,
+    });
+    return { hold, route: snapshot.route };
+  }
+
   async reserve(
     productId: string,
     key: string,
@@ -291,6 +347,10 @@ export class WalletService {
       amountMilli: string;
       actorId?: string;
       estimatedCostNanos?: string;
+      routeId?: string;
+      routePriceVersionId?: string;
+      creditRateVersionId?: string;
+      markupPolicyVersionId?: string;
     },
   ) {
     return this.db.$transaction(async (tx) => {
@@ -303,6 +363,7 @@ export class WalletService {
       });
       if (prior) {
         if (
+          prior.routeId !== (input.routeId ?? null) ||
           prior.accountId !== input.accountId ||
           prior.featureId !== input.featureId ||
           prior.actorId !== (input.actorId ?? null) ||
@@ -398,6 +459,7 @@ export class WalletService {
     holdId: string,
     action: "commit" | "release" | "expire",
     actual?: { creditsMilli: bigint; costNanos: bigint },
+    metered?: MeteredUsage,
   ) {
     return this.db.$transaction(async (tx) => {
       const initial = await tx.creditHold.findFirst({
@@ -408,12 +470,29 @@ export class WalletService {
       const hold = await tx.creditHold.findUniqueOrThrow({
         where: { id: holdId },
       });
+      if (action === "commit" && hold.routeId && !metered)
+        fail("METERED_USAGE_REQUIRED");
+      const priced =
+        metered && hold.routeId
+          ? await priceUsage(
+              tx,
+              productId,
+              hold.routeId,
+              metered.meters,
+              hold.createdAt,
+              hold,
+              metered.providerCostNanos,
+            )
+          : undefined;
+      if (metered && !priced) fail("INVALID_METERED_HOLD");
+      if (priced)
+        actual = { creditsMilli: priced.credits, costNanos: priced.cost };
       const charged = actual?.creditsMilli ?? hold.amountMilli;
       if (
         actual &&
         (action !== "commit" ||
           charged < 0n ||
-          charged > hold.amountMilli ||
+          (!metered && charged > hold.amountMilli) ||
           actual.costNanos < 0n)
       )
         fail("INVALID_ACTUAL_USAGE");
@@ -428,18 +507,53 @@ export class WalletService {
         (hold.status !== "open" || hold.expiresAt > new Date())
       )
         return hold;
-      if (hold.status === status) return hold;
-      if (hold.status !== "open") fail("HOLD_CLOSED");
-      if (action === "commit" && hold.expiresAt <= new Date())
-        fail("HOLD_EXPIRED");
+      if (hold.status === status) {
+        if (action === "commit" && actual) {
+          const previous = await tx.usageEvent.findFirst({
+            where: { holdId: hold.id, productId },
+          });
+          if (
+            !previous ||
+            previous.creditsChargedMilli !== charged ||
+            previous.costNanos !== actual.costNanos ||
+            (metered && !isDeepStrictEqual(previous.meters, metered.meters))
+          )
+            fail("IDEMPOTENCY_CONFLICT");
+        }
+        return hold;
+      }
+      const late =
+        action === "commit" &&
+        (hold.status === "expired" || hold.expiresAt <= new Date());
+      if (
+        hold.status !== "open" &&
+        !(hold.status === "expired" && late && metered)
+      )
+        fail("HOLD_CLOSED");
+      if (late && !metered) fail("HOLD_EXPIRED");
+      const reserved = hold.status === "open" ? hold.amountMilli : 0n;
+      let paid = charged;
+      let debt = 0n;
       if (action === "commit") {
         const buckets = await tx.creditBucket.findMany({
           where: { accountId: hold.accountId, productId, expiredAt: null },
         });
+        const availableBuckets = buckets
+          .filter((b) => b.expiresAt === null || b.expiresAt > new Date())
+          .reduce((sum, b) => sum + b.remainingMilli, 0n);
+        const availableWallet =
+          wallet.balanceMilli - wallet.heldMilli + reserved;
+        const available =
+          availableBuckets < availableWallet
+            ? availableBuckets
+            : availableWallet;
+        if (!metered && available < charged) fail("CREDITS_EXPIRED");
+        paid = charged < available ? charged : available > 0n ? available : 0n;
+        debt = charged - paid;
         let allocations;
         try {
           allocations =
-            charged === 0n ? [] : allocateCredits(buckets, charged, new Date());
+            paid === 0n ? [] : allocateCredits(buckets, paid, new Date());
         } catch (error) {
           if (
             error instanceof RangeError &&
@@ -455,8 +569,8 @@ export class WalletService {
             kind: "commit",
             operationKey: `commit:${hold.id}`,
             walletSeq: wallet.lastOperationSeq + 1n,
-            balanceAfterMilli: wallet.balanceMilli - charged,
-            debtAfterMilli: wallet.debtMilli,
+            balanceAfterMilli: wallet.balanceMilli - paid,
+            debtAfterMilli: wallet.debtMilli + debt,
           },
         });
         const usage = await tx.usageEvent.create({
@@ -466,13 +580,27 @@ export class WalletService {
             featureId: hold.featureId!,
             holdId,
             operationId: operation.id,
-            costSource: actual
-              ? "provider"
-              : hold.estimatedCostNanos === null
-                ? "unknown"
-                : "estimate",
+            isLate: late,
+            actorId: hold.actorId,
+            routeId: hold.routeId,
+            routePriceVersionId: hold.routePriceVersionId,
+            creditRateVersionId: hold.creditRateVersionId,
+            markupPolicyVersionId: hold.markupPolicyVersionId,
+            provider: priced?.route.provider,
+            model: priced?.route.model,
+            meters: metered?.meters,
+            inputTokens: BigInt(metered?.meters.input_tokens ?? "0"),
+            outputTokens: BigInt(metered?.meters.output_tokens ?? "0"),
+            rawUsage: metered?.rawUsage as Prisma.InputJsonObject | undefined,
+            costSource:
+              priced?.costSource ??
+              (actual
+                ? "provider"
+                : hold.estimatedCostNanos === null
+                  ? "unknown"
+                  : "estimate"),
             costNanos: actual?.costNanos ?? hold.estimatedCostNanos ?? 0n,
-            status: "ok",
+            status: metered?.status ?? "ok",
             creditsChargedMilli: charged,
             idempotencyKey: `commit:${hold.id}`,
             occurredAt: new Date(),
@@ -485,6 +613,35 @@ export class WalletService {
             usageEventId: usage.id,
           },
         });
+        if (debt > 0n)
+          await tx.creditLedgerEntry.create({
+            data: {
+              accountId: hold.accountId,
+              productId,
+              operationId: operation.id,
+              amountMilli: -debt,
+              reason: "debt",
+              usageEventId: usage.id,
+              holdId,
+            },
+          });
+        if (late || charged > hold.amountMilli || debt > 0n)
+          await tx.adminTask.upsert({
+            where: { dedupeKey: `metering:${hold.id}` },
+            update: {},
+            create: {
+              kind: "metering_discrepancy",
+              dedupeKey: `metering:${hold.id}`,
+              accountId: hold.accountId,
+              details: {
+                holdId: hold.id,
+                isLate: late,
+                reservedMilli: hold.amountMilli.toString(),
+                chargedMilli: charged.toString(),
+                debtMilli: debt.toString(),
+              },
+            },
+          });
         for (const allocation of allocations) {
           await tx.creditBucket.update({
             where: { id: allocation.bucketId },
@@ -509,20 +666,25 @@ export class WalletService {
           accountId_productId: { accountId: hold.accountId, productId },
         },
         data: {
-          heldMilli: { decrement: hold.amountMilli },
+          heldMilli: { decrement: reserved },
           balanceMilli: {
-            decrement: action === "commit" ? charged : 0n,
+            decrement: action === "commit" ? paid : 0n,
           },
+          debtMilli: { increment: action === "commit" ? debt : 0n },
           lastOperationSeq: { increment: action === "commit" ? 1 : 0 },
           version: { increment: 1 },
         },
       });
-      await closeLimits(
-        tx,
-        hold.limitReservations,
-        action === "commit",
-        actual ? { credits: charged, cost_nanos: actual.costNanos } : undefined,
-      );
+      if (reserved > 0n || action === "commit")
+        await closeLimits(
+          tx,
+          hold.limitReservations,
+          action === "commit",
+          actual
+            ? { credits: charged, cost_nanos: actual.costNanos }
+            : undefined,
+          reserved > 0n,
+        );
       return tx.creditHold.update({
         where: { id: holdId },
         data: {
