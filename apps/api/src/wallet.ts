@@ -244,7 +244,20 @@ export class WalletService {
       });
       if (account.status !== "active") fail("ACCOUNT_INACTIVE");
       const amount = BigInt(input.amountMilli);
+      const buckets = await tx.creditBucket.findMany({
+        where: {
+          accountId: input.accountId,
+          productId,
+          expiredAt: null,
+          OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+        },
+      });
+      const spendable = buckets.reduce(
+        (sum, bucket) => sum + bucket.remainingMilli,
+        0n,
+      );
       if (
+        spendable - wallet.heldMilli < amount ||
         wallet.debtMilli > 0n ||
         wallet.balanceMilli - wallet.heldMilli < amount
       )
@@ -301,11 +314,17 @@ export class WalletService {
         const buckets = await tx.creditBucket.findMany({
           where: { accountId: hold.accountId, productId, expiredAt: null },
         });
-        const allocations = allocateCredits(
-          buckets,
-          hold.amountMilli,
-          hold.createdAt,
-        );
+        let allocations;
+        try {
+          allocations = allocateCredits(buckets, hold.amountMilli, new Date());
+        } catch (error) {
+          if (
+            error instanceof RangeError &&
+            error.message === "Insufficient credits"
+          )
+            fail("CREDITS_EXPIRED");
+          throw error;
+        }
         const operation = await tx.creditOperation.create({
           data: {
             accountId: hold.accountId,

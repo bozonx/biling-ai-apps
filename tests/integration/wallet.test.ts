@@ -163,10 +163,28 @@ test("wallet transactions serialize reservations and preserve an append-only led
     await expect(
       service.close(product.id, released.id, "commit"),
     ).rejects.toThrow();
-    expect(await service.balance(account.id, product.id)).toMatchObject({
-      balanceMilli: 300n,
-      heldMilli: 0n,
+    const stale = await service.reserve(product.id, "stale-bucket", {
+      accountId: account.id,
+      featureId: feature.id,
+      amountMilli: "100",
     });
+    await db.creditBucket.updateMany({
+      where: { accountId: account.id, productId: product.id },
+      data: { expiresAt: new Date(0) },
+    });
+    await expect(
+      service.close(product.id, stale.id, "commit"),
+    ).rejects.toMatchObject({
+      response: { code: "CREDITS_EXPIRED" },
+    });
+    await service.close(product.id, stale.id, "release");
+    await expect(
+      service.reserve(product.id, "expired-balance", {
+        accountId: account.id,
+        featureId: feature.id,
+        amountMilli: "100",
+      }),
+    ).rejects.toMatchObject({ response: { code: "INSUFFICIENT_CREDITS" } });
   } finally {
     await db.$disconnect();
     if (previous === undefined) delete process.env.DATABASE_URL;
