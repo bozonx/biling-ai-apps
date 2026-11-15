@@ -42,7 +42,7 @@ const auth = useAuthStore();
         :title="t('language.title')"
         :description="t('language.description')"
       >
-        <AppLanguageSwitcher variant="select" />
+        <AppLanguageSwitcher />
       </AppSettingRow>
     </AppSection>
 

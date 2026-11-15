@@ -6,7 +6,8 @@
     "noData": "No data",
     "copy": "Copy",
     "copied": "Copied",
-    "goHome": "Go home"
+    "goHome": "Go home",
+    "moreInfo": "More information"
   },
   "nav": {
     "menu": "Menu",
@@ -105,7 +106,7 @@
   "admin": {
     "title": "Administration",
     "token": "Staff access token",
-    "tokenHint": "The token stays in page memory. IdentityBinding and StaffRole are required.",
+    "tokenHint": "The token is stored in the browser. IdentityBinding and StaffRole are required.",
     "signInDev": "Sign in as developer",
     "load": "Load",
     "disconnect": "Disconnect",
@@ -113,6 +114,53 @@
     "save": "Submit",
     "failed": "Request failed. Check permissions and form fields.",
     "secret": "Save this key: it is shown only once",
+    "nav": {
+      "overview": "Overview",
+      "products": "Products",
+      "plans": "Plans & Versions",
+      "pricing": "Features & Pricing",
+      "routes": "AI Routes",
+      "margins": "Margins & Markups",
+      "keys": "API Keys",
+      "tasks": "Reconciliation Tasks",
+      "actions": "Actions",
+      "settings": "Settings",
+      "groups": {
+        "catalog": "Catalog",
+        "ai": "AI & Routing",
+        "operations": "Operations",
+        "system": "System"
+      }
+    },
+    "overview": {
+      "title": "Administrator Dashboard",
+      "description": "Catalog summary, plan management, and quick operations",
+      "quickActions": "Quick Actions",
+      "stats": {
+        "products": "Total products",
+        "plans": "Pricing plans",
+        "routes": "Model routes",
+        "keys": "Active keys",
+        "margin": "Total revenue"
+      },
+      "info": "Billing system overview dashboard: key entity counts, catalog cache status, and fast access to administrative actions."
+    },
+    "settings": {
+      "title": "Admin Settings",
+      "description": "Appearance and administrator session preferences",
+      "session": "Administrator Session",
+      "sessionDescription": "Details about current token and environment parameters",
+      "tokenActive": "Active token",
+      "devMode": "Developer mode",
+      "endpoint": "API Endpoint",
+      "cache": "Data & Cache",
+      "cacheDescription": "Refresh cached catalog data and manage session",
+      "reloadCatalog": "Reload catalog data",
+      "reloaded": "Data reloaded successfully",
+      "signOut": "Sign out of staff session",
+      "signOutDescription": "Remove saved token and return to sign in form",
+      "info": "Administrator session preferences: active access token inspection, catalog cache invalidation, language, and theme switching."
+    },
     "actions": {
       "product": "Create product",
       "feature": "Create feature",
@@ -130,7 +178,8 @@
       "limitPolicy": "Add product limit",
       "route": "Create model route",
       "productRoute": "Enable product route",
-      "markup": "Create markup policy"
+      "markup": "Create markup policy",
+      "info": "Interactive administrative operation runner: create products, issue keys, grant credits, and publish pricing versions."
     },
     "fields": {
       "code": "Code",
@@ -196,6 +245,71 @@
       "productRoutes": "Product routes",
       "margin": "Revenue and cost",
       "tasks": "Reconciliation tasks"
+    },
+    "products": {
+      "info": "Catalog of products and services. Each product groups related features, pricing plans, and routing rules for isolated billing and metering."
+    },
+    "plans": {
+      "info": "Manage subscription plans and their version lifecycle. Create plans, publish version updates with limits and grants, or sunset deprecated versions."
+    },
+    "pricing": {
+      "info": "Pricing matrix: define billed features, base execution costs in credits, per-unit multipliers, and one-off credit packages."
+    },
+    "margins": {
+      "info": "Margin and markup rules. Configure percentage tiers and minimum charges applied on top of raw provider resource costs."
+    },
+    "keys": {
+      "info": "Manage system and customer API keys. Issue scoped access tokens bound to products with instant revocation capability."
+    },
+    "routes": {
+      "info": "AI provider routing configuration. Maps external models to specific upstream providers, fallback routes, and cost price tables."
+    },
+    "tasks": {
+      "info": "Log of background billing and reconciliation tasks: recurring accruals, balance reconciliations, and payment gateway syncs."
+    },
+    "hints": {
+      "actionHeader": "Form for creating and updating entities. Select an action type and fill in the required parameters."
+    },
+    "fieldHints": {
+      "actionSelect": "Select the administrative action type to create an entity or modify billing parameters.",
+      "adminToken": "Secret staff token for authentication against the billing admin API.",
+      "code": "Unique alphanumeric slug in lowercase without spaces (e.g. ai-chat, pro-monthly).",
+      "name": "Human-readable display name shown in the catalog and user receipts (e.g. Pro Monthly).",
+      "productId": "Unique product identifier (UUID) that this entity or operation belongs to.",
+      "planId": "Parent pricing plan identifier (UUID) for which this version is being created.",
+      "routeId": "AI route identifier (UUID) specifying the target provider, model, and variant.",
+      "featureId": "Feature or action identifier (UUID) for which the price is being defined.",
+      "accountId": "Customer account or organization identifier (UUID) being targeted.",
+      "creditRateVersionId": "Published credit rate version identifier (UUID) used for currency conversion.",
+      "version": "Sequential version number (integer: 1, 2, 3...). Plan and pricing updates are published as new versions.",
+      "creditGrants": "JSON array of recurring credit grants. Example: [{\"bucket\":\"ai\",\"amountMilli\":5000000}].",
+      "limits": "JSON object of rate limits or quotas. Example: {\"rpm\":60,\"monthly\":10000}.",
+      "entitlements": "JSON array of granted feature flags. Example: [\"gpt-4o\",\"priority_support\"].",
+      "creditGrantInterval": "Base interval for recurring credit grants: day, week, month, or year.",
+      "creditGrantIntervalCount": "Interval multiplier (usually 1 — every month or day).",
+      "creditsMilli": "Price per unit in milli-credits (1 credit = 1000 milli-credits. 500 = 0.5 credits).",
+      "unit": "Base consumption measurement unit (e.g. request, token, second, image).",
+      "per": "Number of units per specified price (e.g. 1 for a single request, or 1000 for 1k tokens).",
+      "creditValueMicros": "Value of 1 credit in US dollar micros ($1.00 = 1,000,000 micros).",
+      "amountMilli": "Credit amount in milli-credits (e.g. 10000 = 10.0 credits).",
+      "tiers": "JSON definition of tiered markup or discount brackets. Example: [{\"upTo\":10000,\"markupPercent\":20}].",
+      "minChargeMilli": "Minimum charge threshold per single request in milli-credits.",
+      "effectiveFrom": "Start timestamp in ISO 8601 format (e.g. 2026-01-01T00:00:00Z).",
+      "effectiveTo": "Expiration timestamp in ISO 8601 format.",
+      "provider": "Model provider name (e.g. openai, anthropic, google, deepseek).",
+      "model": "Provider model identifier (e.g. gpt-4o, claude-3-5-sonnet, gemini-1.5-pro).",
+      "variant": "Route variant configuration (e.g. default, streaming, reasoning).",
+      "kind": "Entity type (for plans: subscription/usage; for routes: chat/completion/embedding).",
+      "productScope": "Scope of the plan: comma-separated product codes or \"all\" for a global plan.",
+      "key": "Unique feature metering key (e.g. ai.chat.completion, export.pdf).",
+      "pricing": "Feature pricing model: fixed or metered.",
+      "scopes": "API key permissions separated by spaces or commas (e.g. billing:read api:invoke *).",
+      "target": "Target publication entity type: version, rate, routePrice, or markup.",
+      "id": "Unique record identifier (UUID) to publish, revoke, or terminate.",
+      "items": "JSON array of route price items (input/output tokens, tool invocations).",
+      "window": "Time window for rate limiting: minute, hour, day, or month.",
+      "meter": "Meter counter identifier: requests, credits, or cost_nanos.",
+      "max": "Maximum allowed meter threshold within the window."
     }
   }
 }
