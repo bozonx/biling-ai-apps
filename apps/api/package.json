@@ -20,7 +20,8 @@
     "reflect-metadata": "catalog:",
     "rxjs": "catalog:",
     "@billing/contracts": "workspace:*",
-    "zod": "catalog:"
+    "zod": "catalog:",
+    "@billing/core": "workspace:*"
   },
   "type": "module"
 }

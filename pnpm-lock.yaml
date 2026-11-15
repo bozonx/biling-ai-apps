@@ -216,6 +216,9 @@ importers:
       '@billing/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@billing/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@fastify/helmet':
         specifier: 'catalog:'
         version: 13.2.0
