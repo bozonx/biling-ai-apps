@@ -1,6 +1,6 @@
 # Биллинг-сервис для AI-продуктов — дизайн
 
-Статус: черновик v4 · 2026-11-15
+Статус: черновик v5 · 2026-11-15
 
 Отдельный сервис подписок, кредитов, квот и рефералов для продуктов **TyCo**,
 **FastCat**, **BloggerDog** и будущих. Первый и пока единственный потребитель —
@@ -90,8 +90,17 @@ BloggerDog позже подключается к сервису как обыч
  и `UsageEvent` идёт `actorId`, а `(issuer, subject)` и email живут только в
  `Identity` и `BillingAccount` — их можно обезличить без правки журнала.
 12. **Первичные ключи — UUIDv7** (сортируемы по времени). Большие таблицы
- (`CreditLedgerEntry`, `UsageEvent`) готовы к партиционированию по времени:
- на `UsageEvent` нет внешних ключей, ссылки на него мягкие.
+ (`CreditLedgerEntry`, `UsageEvent`) готовы к партиционированию по диапазону
+ `id`: кроме PK, уникальных индексов на них нет (Postgres требует ключ
+ партиции в каждом уникальном индексе), идемпотентность живёт в узких
+ таблицах `CreditOperation` и `UsageEventKey`. На `UsageEvent` нет внешних
+ ключей, ссылки на него мягкие.
+13. **Неизменяемость защищена БД, а не только кодом.** Триггеры запрещают
+ UPDATE/DELETE в таблицах «только дописывается» и правку версий после
+ `publishedAt`; суммы и состояния защищены CHECK. Все метки времени —
+ `timestamptz`. Связи — `onDelete: Restrict`.
+14. **`Product.code` неизменяем:** на него ссылаются `Plan.productScope` и
+ ключи JSON в `PlanVersion`.
 
 ---
 
@@ -220,8 +229,8 @@ loopback/deep link для Tauri.
 - Внешний идентификатор сразу превращается во внутренний:
 
 ```
-Identity   id (= actorId), issuer, subject, createdAt, deletedAt?
-           UNIQUE (issuer, subject)
+Identity   id (= actorId), issuer?, subject?, createdAt, deletedAt?
+           UNIQUE (issuer, subject)   -- NULL после удаления (§20)
 ```
 
   `issuer` — URL IdP или `product:<productId>` для продуктов со своим auth.
@@ -243,7 +252,8 @@ BillingAccount
                                        -- UNIQUE (productId, externalRef)
   country, email                       -- email для писем (у team — плательщика)
   status: 'active' | 'suspended' | 'deleted'
-  UNIQUE (ownerIdentityId) WHERE kind = 'personal'
+  personalOwnerId? UNIQUE              -- = ownerIdentityId у personal, NULL у team;
+                                       -- обычная уникальность вместо частичного индекса
 
 AccountCustomer                        -- клиент у источника оплаты
   accountId, source, externalCustomerId
@@ -372,15 +382,34 @@ PlanVersion        id, planId, version,
                    requiresBasePlanId? (для addon),
                    effectiveFrom, effectiveTo, publishedAt
 Offer              id, planVersionId, source: 'paddle'|'polar'|'revenuecat'|'manual',
-                   interval: 'month' | 'year', trialDays,
+                   interval: 'day'|'week'|'month'|'year', intervalCount, trialDays,
                    externalPriceId, amountMicros, currency, region?, isActive
+                   UNIQUE (source, externalPriceId)
 CreditPack         id, productId, code, credits, validityDays, visibility
 CreditPackOffer    id, creditPackId, source, externalPriceId, amountMicros, currency
-ProductFeature     id, productId, key, requiredEntitlement?, pricing: 'fixed'|'metered',
+ProductFeature     id, productId, key, requires (jsonb), pricing: 'fixed'|'metered',
                    defaultRouteId?, defaultHoldTtlSec, status
+ProductModelRoute  productId, routeId, requires (jsonb), isActive   -- доступ к моделям
 FeaturePrice       id, featureId, version, credits (фикс. цена действия, §10.5)
-Promotion          (этап 4+) id, code, kind, rules, startsAt, endsAt, maxRedemptions
+Promotion          (этап 4+) id, code, kind, rules, startsAt, endsAt,
+                   maxRedemptions, maxPerAccount
+PromotionRedemption id, promotionId, accountId, idempotencyKey UNIQUE
 ```
+
+- **Версии:** `publishedAt IS NULL` — черновик (правится и удаляется), иначе
+  версия неизменяема (триггер). Единое правило для `PlanVersion`,
+  `CreditRateVersion`, `MarkupPolicyVersion`, `FeaturePrice`,
+  `RoutePriceVersion` (с её строками) и `ReferralProgramVersion`.
+- **`externalPriceId` уникален у источника.** Новая версия тарифа и каждый
+  регион MoR — новая цена у источника (Polar создаётся через API при
+  публикации). Для магазинов `amountMicros` — ориентир; фактическая сумма —
+  в `Payment`.
+- **Требования к правам** (`requires`): `{ 'ai.enabled': true,
+  'ai.model_tier': 'pro' }` — `bool` по равенству, `int`/`enum` — «не меньше»
+  (по порядку `enumValues`). Так же описан доступ к моделям: маршрут без строки
+  `ProductModelRoute` продукту недоступен, тир модели — в её `requires`.
+- **Снимок пакета:** `Purchase` хранит `creditsMilli` и `validityDays` на
+  момент покупки, поэтому `CreditPack` можно править без версий.
 
 - **Период и триал — в `Offer`, не в версии.** Месячный и годовой Pro — одна
   версия тарифа (одни права, кредиты за месяц) с двумя офферами. Годовой
@@ -388,7 +417,7 @@ Promotion          (этап 4+) id, code, kind, rules, startsAt, endsAt, maxRed
 
 - `ProductFeature` — реестр платных действий продукта (как реестр прав):
   reserve с неизвестной `feature` отклоняется, право проверяется по
-  `requiredEntitlement`, оценка и TTL резерва берутся из записи, если шлюз их
+  `requires`, оценка и TTL резерва берутся из записи, если шлюз их
   не передал. По `feature` строится аналитика расхода и маржи.
 - Цена вынесена в `Offer`: одна версия продаётся по разной цене в Paddle, в
 магазинах (комиссия 15–30 %) и по регионам (PPP). Права у всех офферов одной
@@ -468,52 +497,64 @@ Promotion          (этап 4+) id, code, kind, rules, startsAt, endsAt, maxRed
 
 ```
 CreditWallet       accountId, productId,
-                   balanceMilli, heldMilli, debtMilli (≥ 0),     -- материализация
-                   lastGrantPeriodStart?, version                 -- строка для блокировки
+                   balanceMilli, heldMilli, debtMilli (все ≥ 0),  -- материализация
+                   version                                        -- строка для блокировки
                    PK (accountId, productId)
+CreditOperation    id, accountId, productId, kind, operationKey, actorId?, meta, createdAt
+                   UNIQUE (productId, operationKey)               -- идемпотентность
 CreditBucket       id, accountId, productId,
                    kind: 'plan' | 'pack' | 'promo' | 'referral' | 'compensation' | 'trial',
-                   grantedMilli, remainingMilli (материализация), expiresAt?,
-                   creditRateVersionId, sourceType, sourceId, periodStart?, createdAt
-                   UNIQUE NULLS NOT DISTINCT (accountId, productId, sourceType, sourceId, periodStart)
-CreditLedgerEntry  id, accountId, productId, bucketId?, amountMilli (+/-),
+                   grantedMilli, remainingMilli (материализация), expiresAt?, expiredAt?,
+                   creditRateVersionId, sourceType (enum), sourceId, periodStart?,
+                   operationId (операция, создавшая партию), createdAt
+CreditLedgerEntry  id, operationId, accountId, productId, bucketId?, amountMilli (+/-, ≠ 0),
                    reason: 'accrual'|'purchase'|'consumption'|'expiry'|'refund'|
                            'revoke'|'adjustment'|'referral_reward'|'promo'|
                            'debt'|'debt_repayment',
-                   operationKey, actorId?, usageEventId?, paymentId?, holdId?,
+                   actorId?, usageEventId?, holdId? (мягкие), paymentId?,
                    meta, createdAt
-                   UNIQUE NULLS NOT DISTINCT (productId, operationKey, bucketId, reason)
-CreditHold         id, accountId, productId, actorId?, featureId,
-                   amountMilli, committedMilli, priceVersionId?,
+                   CHECK (bucketId IS NULL) = (reason = 'debt')
+CreditHold         id, accountId, productId, actorId?, featureId? (обязателен у hold),
+                   routeId?, amountMilli, committedMilli,
+                   routePriceVersionId? | featurePriceId?,
                    kind: 'hold'|'lease',
                    status: 'open'|'committed'|'released'|'expired',
-                   expiresAt, idempotencyKey, createdAt
+                   expiresAt, closedAt?, idempotencyKey, createdAt
                    UNIQUE (productId, idempotencyKey)
 ```
+
+- **Идемпотентность — у операции, а не у записей журнала.** Любое изменение
+  кошелька — одна строка `CreditOperation` с детерминированным ключом
+  (`accrual:sub:<id>:<portionStart>`, `accrual:grant:<id>:<portionStart>`,
+  `upgrade:<subId>:<portionStart>:<planVersionId>`, `purchase:<id>`,
+  `commit:<holdId>:<n>`, `expiry:<bucketId>` …) и её записи журнала в той же
+  транзакции. Повтор ловится уникальностью `(productId, operationKey)`;
+  записям журнала и партиям своя уникальность не нужна. Так журнал
+  партиционируется без смены ключей, и не нужны `NULLS NOT DISTINCT` и
+  частичные индексы, которые Prisma не видит и считает дрейфом.
+- **Защита от двойного начисления** — тот же ключ операции: повторная
+  обработка `subscription.renewed` или ленивое начисление в двух параллельных
+  запросах упираются в уникальность и не создают вторую порцию.
 
 - **Материализации** (`balanceMilli`, `heldMilli`, `remainingMilli`) обновляются
   в той же транзакции, что и запись журнала; ночная проверка сверяет их с
   суммой журнала и алертит расхождение. Reserve читает одну строку кошелька.
-- **Защита от двойного начисления** — уникальность партии по источнику и
-  периоду: повторная обработка `subscription.renewed` или ленивое начисление
-  в двух параллельных запросах не создадут вторую порцию.
 - **Ключи идемпотентности — в пространстве продукта**: разные продукты могут
   прислать одинаковый ключ.
 - `committedMilli` нужен lease с несколькими commit и `extend`;
-  `priceVersionId` фиксирует цену, по которой сделана оценка.
+  `routePriceVersionId`/`featurePriceId` фиксируют цену, по которой сделана
+  оценка. У lease `featureId` пуст: он покрывает много действий (§8.7).
+- `holdId` в журнале — мягкая ссылка: старые резервы можно чистить, журнал
+  вечен.
 
-- Остаток партии — сумма журнала по ней; материализуется в `bucket_balances`
-в той же транзакции для скорости чтения. Источник правды — журнал.
+- Остаток партии — сумма журнала по ней; материализуется в
+`CreditBucket.remainingMilli` в той же транзакции для скорости чтения.
+Источник правды — журнал.
 - **Резерв — на уровне кошелька**, не партий: `свободно = Σ остатков
 непросроченных партий − Σ открытых резервов − долг`. По партиям сумма
 раскладывается только при commit (§8.4).
-- **Идемпотентность журнала** — по `(productId, operationKey, bucketId,
-reason)`: одно списание из двух партий даёт две записи с одним
-`operationKey`; начисление с погашением долга даёт на одной партии записи
-`accrual` и `debt_repayment` — их различает `reason`. Записи долга идут без
-партии (`bucketId = NULL`), поэтому индекс — `NULLS NOT DISTINCT`
-(Postgres 15+; создаётся сырой миграцией, Prisma этого не умеет), иначе
-повтор записи долга не ловится.
+- Одно списание из двух партий — одна операция с двумя записями; начисление
+с погашением долга — одна операция с записями `accrual` и `debt_repayment`.
 - **Долг** живёт на кошельке (`debtMilli`), а не в партии. Перерасход (§8.6)
 увеличивает долг записью `reason='debt'` без партии. Долг гасится из любого
 свободного остатка: при каждом новом начислении и при каждом commit или
@@ -536,8 +577,8 @@ release, после которого у кошелька есть свободн
 воркеру не нужен обход всех бесплатных пользователей.
 - **Апгрейд посреди периода** (Basic → Pro): права нового тарифа — сразу;
 кредиты — доплата разницы `creditGrants(new) − creditGrants(old)` за текущую
-порцию, пропорционально оставшейся части порции, в партию `plan` с тем же
-сроком. Оставшиеся кредиты старой порции не трогаются. Деньги за апгрейд
+порцию, пропорционально оставшейся части порции, **отдельной** партией `plan`
+с тем же сроком (существующие партии не меняются: `grantedMilli` неизменяем). Оставшиеся кредиты старой порции не трогаются. Деньги за апгрейд
 считает MoR (proration); начисление — по его событию `plan_changed` с
 оплатой. Повторный апгрейд/даунгрейд в той же порции доплату не повторяет:
 ключ операции — `(subscriptionId, порция, planVersionId)`.
@@ -704,24 +745,29 @@ meters: {
 
 ```
 UsageEvent   id (UUIDv7), accountId, productId, actorId?, holdId?,
-             featureId, routeId?, provider, model,
+             featureId, routeId?, provider?, model?,          -- пусто у действий без модели
              meters (jsonb), inputTokens, outputTokens,      -- основные отдельно
-             costNanos, priceVersionId?, markupPolicyVersionId?,
+             costNanos, routePriceVersionId?, markupPolicyVersionId?,
              creditRateVersionId?, featurePriceId?, creditsChargedMilli,
              status: 'ok'|'error'|'partial'|'late', byok,
              idempotencyKey, traceId, rawUsage (jsonb), occurredAt, createdAt
-             UNIQUE (productId, idempotencyKey)
+UsageEventKey productId, idempotencyKey, usageEventId   PK (productId, idempotencyKey)
 ```
 
 Внешних ключей на `UsageEvent` и из него нет (инвариант 12): таблица
-партиционируется по `occurredAt`, когда вырастет.
+партиционируется по диапазону `id`, когда вырастет. Идемпотентность — в узкой
+`UsageEventKey`, которая вставляется в той же транзакции; ключи старше срока
+хранения (настройка, не меньше окна позднего commit) удаляются.
 
 ### 10.2. Таблица цен
 
 ```
-ModelRoute         id, provider, model, kind: 'llm'|'stt'|'tts'|'image'|'video'|'mt'|'embed'
-RoutePriceVersion  id, routeId, version, effectiveFrom, effectiveTo,
+ModelRoute         id, provider, model, variant ('standard'|'batch'|'flex'|…),
+                   kind: 'llm'|'stt'|'tts'|'image'|'video'|'mt'|'embed'
+                   UNIQUE (provider, model, variant)
+RoutePriceVersion  id, routeId, version, effectiveFrom, publishedAt?,
                    source: 'manual'|'seed'|'sync'|'provider-api', approvedBy
+                   -- действует последняя опубликованная с effectiveFrom <= t
 RoutePriceItem     priceVersionId, meter, unitNanos, per (1 | 1e6 …),
                    tier? { fromContextTokens, … }, minBillableUnits?
 ```
@@ -741,7 +787,7 @@ RoutePriceItem     priceVersionId, meter, unitNanos, per (1 | 1e6 …),
 - **Deepgram / Groq** — по секундам аудио с учётом минимума.
 - **Cloudflare Workers AI** — в нейронах.
 - **Изображения / видео** — по штукам, мегапикселям, секундам.
-- **Батч-API** — отдельный маршрут со своей ценой.
+- **Батч-API, flex, priority** — отдельный маршрут (`variant`) со своей ценой.
 
 ### 10.4. Обновление цен (`packages/pricing-sync`, этап 5)
 
@@ -869,22 +915,39 @@ purchase.succeeded (pack/consumable) | refunded
 Subscription   id, accountId, planVersionId, offerId, source,
                externalSubscriptionId, externalCustomerId,
                status, currentPeriodStart, currentPeriodEnd, trialEndsAt,
-               cancelAtPeriodEnd, quantity (= 1 в v1; места для команд),
-               lastSyncedAt, version
+               pastDueSince?, cancelAtPeriodEnd, canceledAt?, endedAt?,
+               scheduledPlanVersionId?, scheduledOfferId?, scheduledChangeAt?,
+               quantity (= 1 в v1; места для команд), lastSyncedAt, version
                UNIQUE (source, externalSubscriptionId)
-Purchase       id, accountId, productId, creditPackOfferId, source, externalId,
+SubscriptionEvent id, subscriptionId, kind, fromStatus?, toStatus?,
+               fromPlanVersionId?, toPlanVersionId?, webhookEventId?, meta, occurredAt
+               -- история смен статуса и тарифа, только дописывается
+Purchase       id, accountId, productId, creditPackOfferId,
+               creditsMilli, validityDays (снимок пакета), source, externalId,
                status: 'pending'|'paid'|'refunded', bucketId?, createdAt
                UNIQUE (source, externalId)
-Payment        id, accountId, subscriptionId?, purchaseId?, source, externalId, kind,
-               status, currency,
+Payment        id, accountId, subscriptionId?, purchaseId?,
+               planVersionId?, offerId? (снимок «за что заплачено»),
+               source, externalId, kind, status, currency,
                grossMicros, taxMicros, feeMicros, discountMicros, netMicros,  -- в валюте платежа
                grossUsdMicros, netUsdMicros, fxRate, fxSource, netIsEstimated,
                refundedMicros (материализация суммы PaymentRefund), occurredAt
                UNIQUE (source, externalId)
-PaymentRefund  id, paymentId, source, externalId, kind: 'refund'|'chargeback',
-               amountMicros, amountUsdMicros, occurredAt
+PaymentRefund  id, paymentId, source, externalId,
+               kind: 'refund'|'chargeback'|'chargeback_reversal',
+               amountMicros (> 0, знак задаёт kind), amountUsdMicros, occurredAt
                UNIQUE (source, externalId)
 ```
+
+- **`Payment` хранит снимок тарифа** (`planVersionId`, `offerId`): подписка
+  позже меняет тариф, а маржа по тарифу и комиссии рефералов считаются по
+  тому, за что заплачено на самом деле.
+- **История подписки** — `SubscriptionEvent`: смены статуса и тарифа с
+  моментом и вебхуком-причиной. Нужна для аналитики оттока, поддержки и
+  споров; текущее состояние — в `Subscription`.
+- **Даунгрейд в конце периода** хранится как `scheduledPlanVersionId` +
+  `scheduledChangeAt` и применяется при продлении; `pastDueSince` — отсчёт
+  грейса.
 
 - **Возврат — отдельная запись**, не правка платежа (как журнал кредитов).
   Если источник присылает только накопительную сумму, обработчик создаёт
@@ -934,8 +997,12 @@ PaymentRefund  id, paymentId, source, externalId, kind: 'refund'|'chargeback',
 - Добавлена `ReferralReward` — награда нефинансового вида.
 
 ```
-ReferralProgram     id, productScope, termsVersion, rules (jsonb), status
-ReferralReward      id, referralId, referrerAccountId,
+ReferralProgram        id, code, productScope, status        -- стабильная программа
+ReferralProgramVersion id, programId, version, rules (jsonb), effectiveFrom, publishedAt?
+ReferralCode           id, partnerId, programId, code        -- код живёт дольше версий
+Referral               …, programId, programVersionId        -- условия на момент атрибуции
+ReferralReward      id, referralId, beneficiaryAccountId,
+                    role: 'referrer' | 'referred',
                     kind: 'credits' | 'plan_grant' | 'commission',
                     productId, creditsMilli?, planVersionId?, durationDays?,
                     trigger: 'signup'|'first_payment'|'milestone'|'renewal',
@@ -955,7 +1022,8 @@ chargeback в период холда — `void`; после выдачи не �
 ```
 PlanGrant   id, accountId, productId, planVersionId,
             source: 'default'|'referral'|'promo'|'manual'|'beta',
-            sourceId, startsAt, endsAt? (null = бессрочно), status
+            sourceId, idempotencyKey, startsAt, endsAt? (null = бессрочно), status
+            UNIQUE (productId, idempotencyKey)   -- 'default:<accountId>', 'referral_reward:<id>'
 ```
 
 Грант даёт права, квоты и ежемесячные кредиты, как подписка, без оплаты. Если
@@ -967,7 +1035,7 @@ PlanGrant   id, accountId, productId, planVersionId,
 
 В v1 таблиц `ReferralCommission` и `PartnerPayout` нет: они создаются
 миграцией, когда включаем выплаты. Готово к этому заранее только то, что
-дорого менять потом: `Referral` хранит версию условий, `Payment` —
+дорого менять потом: `Referral` ссылается на `ReferralProgramVersion`, `Payment` —
 `netUsdMicros`, а `ReferralReward.kind` уже допускает `commission`. Правила из
 BloggerDog: комиссия от `netUsdMicros`, отмена — только
 отрицательной записью, ставка фиксируется на момент платежа, версия условий на
@@ -1000,7 +1068,9 @@ email-домена + устройства, платёжного метода п�
 ProductQuotaKey   productId, key, unit ('bytes'|'count'…),
                   overPolicy: { mode: 'deny'|'read_only', graceDays, retentionEvent? }
 QuotaUsage        accountId, productId, key, value, measuredAt
-QuotaReservation  id, accountId, productId, key, amount, status, expiresAt
+QuotaReservation  id, accountId, productId, key, amount, committedAmount?, status,
+                  idempotencyKey, expiresAt, closedAt?
+                  UNIQUE (productId, idempotencyKey)
 ```
 
 Продукт сообщает текущее значение (`PUT /v1/quotas/usage`) после изменений и
@@ -1084,19 +1154,25 @@ SDK — 60 секунд плюс сброс по событию.
 ProductApiKey         id, productId, keyHash (SHA-256), prefix, scopes[],
                       status: 'active'|'revoked', lastUsedAt, createdAt
 ProductWebhookEndpoint id, productId, url, secret (шифрованно), events[], status
-OutboxEvent           id, productId?, type, payload, status, attempts,
-                      nextAttemptAt, deliveredAt
-BillingWebhookEvent   id, source, externalEventId, payload, status, attempts,
-                      processedAt, error      UNIQUE (source, externalEventId)
+OutboxEvent           id, productId?, type, payload, dedupeKey? UNIQUE, createdAt
+OutboxDelivery        id, eventId, endpointId, status, attempts, nextAttemptAt,
+                      deliveredAt, lastError      UNIQUE (eventId, endpointId)
+                      -- у продукта может быть несколько эндпоинтов (ротация)
+BillingWebhookEvent   id, source, externalEventId, payload?, payloadPurgedAt?,
+                      status, attempts, processedAt, error
+                      UNIQUE (source, externalEventId)
 EntitlementOverride   id, accountId, productId, key, value, reason,
                       createdBy, expiresAt?, revokedAt?
 LimitOverride         id, accountId, productId, rule (jsonb), reason,
                       createdBy, expiresAt?
 StaffRole             identityId, role: 'owner'|'admin'|'support'|'viewer'
 AdminAuditLog         id, actorIdentityId, action, targetType, targetId,
-                      before, after, createdAt
-MailOutbox            как в BloggerDog
+                      before, after (без PII), createdAt
+MailOutbox            как в BloggerDog + accountId? (для удаления, §20),
+                      dedupeKey? UNIQUE ('pack_expiry_30d:<bucketId>')
 ```
+
+`dedupeKey` защищает от повторной генерации напоминаний и `balance.low`.
 
 ---
 
@@ -1145,8 +1221,12 @@ reserve/commit (порог для включения lease), поздние comm
 - **Резервное копирование:** PITR для Postgres; журнал кредитов — критичные
 данные.
 - **Рост таблиц:** `CreditLedgerEntry` и `UsageEvent` — UUIDv7 и индексы с
-`createdAt`/`occurredAt` первым или вторым полем; партиционирование
-включаем по объёму, без смены ключей. Сверка материализаций с журналом —
+`createdAt`/`occurredAt`; партиционирование по диапазону `id` включаем по
+объёму, без смены ключей (уникальных индексов, кроме PK, на них нет —
+идемпотентность в `CreditOperation` и `UsageEventKey`, §8.2, §10.1).
+- **Сроки хранения:** `UsageEventKey` — не меньше окна позднего commit;
+`payload` вебхуков источников и отправленные письма — обнуляются/удаляются
+воркером через настраиваемый срок. Сверка материализаций с журналом —
 ночная задача воркера.
 
 ---
@@ -1170,8 +1250,10 @@ reserve/commit (порог для включения lease), поздние comm
 - Удаление из одного продукта и удаление аккаунта целиком — разные операции.
 - Профиль пользователя хранится в IdP; биллинг хранит минимум (`subject`,
 email для писем, страна).
-- При полном удалении: у `Identity` стираются `issuer`/`subject`
-(`deletedAt`), у `BillingAccount` — email и страна. Журнал и `UsageEvent`
+- При полном удалении: у `Identity` обнуляются `issuer`/`subject` и ставится
+`deletedAt` (CHECK держит их согласованными), у `BillingAccount` — email и
+страна; письма аккаунта в `MailOutbox` удаляются, `payload` его вебхуков
+обнуляется. Журнал и `UsageEvent`
 ссылаются только на внутренние id и не правятся (инвариант 11); финансовые
 записи храним обезличенными столько, сколько требует закон; у MoR и
 RevenueCat — запрос на удаление через API.
@@ -1222,8 +1304,11 @@ BloggerDog, иначе сервис окажется производным от
 
 ## 23. Этапы
 
-**v1 — всё, что нужно TyCo, и ничего больше.** Таблицы под будущие этапы
-заранее не создаём: схема без кода обычно оказывается неверной. С первого дня
+**v1 — всё, что нужно TyCo, и ничего больше.** Код под будущие этапы заранее
+не пишем. Схема описывает модель целиком (квоты, рефералы, акции уже в ней),
+потому что её проверили на сценарии всех этапов; таблицы будущих этапов
+пустуют, пока до них не дошли, и меняются миграциями, когда код покажет
+ошибку. С первого дня
 закладываем только то, что дорого менять потом: кошелёк по
 `(account, product)`, `productScope` у тарифа, `Offer` (с периодом) отдельно
 от версии, несколько подписок на аккаунт с `source`, USD-эквиваленты в
