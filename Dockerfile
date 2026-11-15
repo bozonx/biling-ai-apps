@@ -15,5 +15,5 @@ ENV NODE_ENV=production
 COPY --from=deps --chown=node:node /app /app
 USER node
 ENTRYPOINT ["sh", "scripts/entrypoint.sh"]
-HEALTHCHECK CMD node -e "fetch('http://127.0.0.1:'+(process.env.GATEWAY_PORT && !process.env.API_PORT ? process.env.GATEWAY_PORT : process.env.API_PORT || 3001)+'/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+HEALTHCHECK CMD node -e "fetch('http://127.0.0.1:'+(process.env.GATEWAY_PORT && !process.env.API_PORT ? process.env.GATEWAY_PORT : process.env.API_PORT || 3010)+'/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
 CMD ["node", "apps/api/dist/main.js"]

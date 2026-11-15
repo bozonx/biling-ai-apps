@@ -11,7 +11,7 @@ export default defineNuxtConfig({
   },
   runtimeConfig: {
     // Server-only: where the Nitro proxy forwards /api/v1/** (NUXT_API_URL).
-    apiUrl: "http://localhost:3001",
+    apiUrl: "http://localhost:3010",
     public: {
       // Product name shown in the UI (NUXT_PUBLIC_APP_NAME).
       appName: "Billing AI",

@@ -14,7 +14,7 @@ pnpm db:seed
 pnpm dev
 ```
 
-Web: localhost:3000, API: localhost:3001/health, gateway: localhost:3002/health. Worker: `pnpm --filter @billing/api worker`.
+Web: localhost:3012, API: localhost:3010/health, gateway: localhost:3011/health. PostgreSQL: localhost:5433, Redis: localhost:6380. Внутри Docker используются стандартные порты 5432 и 6379. Dev-порт UI 3012 задан в `apps/web/package.json`. Worker: `pnpm --filter @billing/api worker`.
 
 ```sh
 pnpm check
@@ -108,7 +108,7 @@ Nitro проксирует их в API, поэтому CORS не нужен. Н�
 
 | Переменная                      | Назначение                                     |
 | ------------------------------- | ---------------------------------------------- |
-| `NUXT_API_URL`                  | Адрес API для прокси (`http://localhost:3001`) |
+| `NUXT_API_URL`                  | Адрес API для прокси (`http://localhost:3010`) |
 | `NUXT_PUBLIC_APP_NAME`          | Название продукта в интерфейсе                 |
 | `NUXT_PUBLIC_DEV_LOGIN_ENABLED` | Кнопка «Войти как разработчик»                 |
 
