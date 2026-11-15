@@ -1,4 +1,4 @@
-import { healthSchema } from "../../contracts/src";
+import { healthSchema } from "@billing/contracts";
 export class BillingClient {
   constructor(private readonly baseUrl: string) {}
   async health() {

@@ -7,8 +7,6 @@ export default defineConfig({
     seed: "node --import tsx prisma/seed.ts",
   },
   datasource: {
-    url:
-      process.env.DATABASE_URL ??
-      "postgresql://billing:billing@localhost:5432/billing",
+    url: process.env.DATABASE_URL!,
   },
 });

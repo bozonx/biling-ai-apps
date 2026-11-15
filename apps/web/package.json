@@ -17,7 +17,8 @@
     "pinia": "catalog:",
     "@pinia/nuxt": "catalog:",
     "@nuxtjs/i18n": "catalog:",
-    "@nuxt/icon": "catalog:"
+    "@nuxt/icon": "catalog:",
+    "@billing/contracts": "workspace:*"
   },
   "devDependencies": {
     "typescript": "catalog:",

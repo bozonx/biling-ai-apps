@@ -5,15 +5,25 @@ import {
   FastifyAdapter,
   type NestFastifyApplication,
 } from "@nestjs/platform-fastify";
+import { config } from "./config.js";
 import helmet from "@fastify/helmet";
-import { AppModule } from "./module";
+import { AppModule } from "./module.js";
 async function main() {
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
-    new FastifyAdapter(),
+    new FastifyAdapter({
+      logger: true,
+      bodyLimit: 1048576,
+      trustProxy: (_address: string, hop: number) => hop < 1,
+    }),
   );
+  // Only deploy behind one trusted proxy; restrict direct access to prevent IP spoofing.
+  app.setGlobalPrefix("api/v1", { exclude: ["health"] });
   await app.register(helmet);
   app.enableShutdownHooks();
-  await app.listen(Number(process.env.GATEWAY_PORT ?? 3002), "0.0.0.0");
+  await app.listen(config.GATEWAY_PORT, "0.0.0.0");
 }
-void main();
+main().catch((error: unknown) => {
+  console.error(error);
+  process.exit(1);
+});

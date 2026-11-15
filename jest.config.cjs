@@ -1,10 +1,16 @@
 const base = {
   moduleNameMapper: { "^(\\.{1,2}/.*)\\.js$": "$1" },
-  preset: "ts-jest",
+  preset: "ts-jest/presets/default-esm",
+  extensionsToTreatAsEsm: [".ts"],
+  transform: {
+    "^.+\\.tsx?$": [
+      "ts-jest",
+      { useESM: true, tsconfig: { isolatedModules: true } },
+    ],
+  },
   testEnvironment: "node",
 };
 module.exports = {
-  testTimeout: 120000,
   projects: [
     {
       ...base,

@@ -1,7 +1,7 @@
 import { PostgreSqlContainer } from "@testcontainers/postgresql";
 import { RedisContainer } from "@testcontainers/redis";
 import { PrismaPg } from "@prisma/adapter-pg";
-import { PrismaClient } from "../../apps/api/src/generated/prisma/client";
+import { PrismaClient } from "../../apps/api/src/generated/prisma/client.js";
 import { execFileSync } from "node:child_process";
 import { Queue, Worker } from "bullmq";
 test("migrations, Prisma round trip and Redis job processing", async () => {

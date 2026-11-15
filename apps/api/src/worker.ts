@@ -1,20 +1,24 @@
 import "reflect-metadata";
 import "dotenv/config";
 import { NestFactory } from "@nestjs/core";
+import { config } from "./config.js";
 import { Module } from "@nestjs/common";
 import { BullModule } from "@nestjs/bullmq";
 @Module({
   imports: [
     BullModule.forRoot({
       connection: {
-        host: process.env.REDIS_HOST ?? "localhost",
-        port: Number(process.env.REDIS_PORT ?? 6379),
+        host: config.REDIS_HOST,
+        port: config.REDIS_PORT,
       },
     }),
     BullModule.registerQueue({ name: "billing" }),
   ],
 })
 class WorkerModule {}
-void NestFactory.createApplicationContext(WorkerModule).then((app) =>
-  app.enableShutdownHooks(),
-);
+NestFactory.createApplicationContext(WorkerModule)
+  .then((app) => app.enableShutdownHooks())
+  .catch((error: unknown) => {
+    console.error(error);
+    process.exit(1);
+  });

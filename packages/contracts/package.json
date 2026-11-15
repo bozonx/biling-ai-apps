@@ -1,8 +1,23 @@
 {
   "name": "@billing/contracts",
   "private": true,
-  "main": "src/index.ts",
+  "main": "./dist/index.js",
   "dependencies": {
     "zod": "catalog:"
+  },
+  "type": "module",
+  "version": "0.1.0",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
   }
 }

@@ -8,3 +8,8 @@ node_modules
 **/.output
 **/dist
 **/generated
+
+dev_docs
+tests
+playwright-report
+test-results

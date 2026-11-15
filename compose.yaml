@@ -26,17 +26,26 @@ services:
     environment:
       DATABASE_URL: postgresql://billing:billing@postgres:5432/billing
       REDIS_HOST: redis
+      REDIS_PORT: 6379
+      API_PORT: 3001
+      GATEWAY_PORT: 3002
+      RUN_MIGRATIONS_ON_START: "true"
     ports: ["127.0.0.1:3001:3001"]
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
   worker:
     build: .
+    healthcheck:
+      disable: true
     profiles: [app]
     command: ["pnpm", "--filter", "@billing/api", "worker"]
     environment:
       DATABASE_URL: postgresql://billing:billing@postgres:5432/billing
       REDIS_HOST: redis
+      REDIS_PORT: 6379
+      API_PORT: 3001
+      GATEWAY_PORT: 3002
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -44,6 +53,13 @@ services:
     build: .
     profiles: [app]
     command: ["pnpm", "--filter", "@billing/gateway", "start"]
+    environment:
+      DATABASE_URL: postgresql://billing:billing@postgres:5432/billing
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      GATEWAY_PORT: 3002
+    depends_on:
+      api: { condition: service_healthy }
     ports: ["127.0.0.1:3002:3002"]
 volumes:
   postgres:

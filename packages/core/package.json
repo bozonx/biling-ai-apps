@@ -1,6 +1,21 @@
 {
   "name": "@billing/core",
   "private": true,
-  "main": "src/index.ts",
-  "dependencies": {}
+  "main": "./dist/index.js",
+  "dependencies": {},
+  "type": "module",
+  "version": "0.1.0",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  }
 }
