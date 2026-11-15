@@ -1,4 +1,7 @@
-import { accrualBoundary, applyCreditGrant } from "../../packages/core/src/index.js";
+import {
+  accrualBoundary,
+  applyCreditGrant,
+} from "../../packages/core/src/index.js";
 
 it("clamps monthly boundaries without moving the original anchor", () => {
   const anchor = new Date("2024-01-31T12:00:00Z");

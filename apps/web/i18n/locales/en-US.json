@@ -121,7 +121,12 @@
       "key": "Issue API key",
       "revokeKey": "Revoke API key",
       "credits": "Grant credits",
-      "price": "Feature price"
+      "price": "Feature price",
+      "routePrice": "Create route prices",
+      "publish": "Publish version",
+      "revokeVersion": "Revoke plan version",
+      "endVersion": "End version",
+      "limitPolicy": "Add product limit"
     },
     "fields": {
       "code": "Code",
@@ -148,7 +153,18 @@
       "unit": "Unit",
       "per": "Units per price",
       "status": "Status",
-      "prefix": "Prefix"
+      "prefix": "Prefix",
+      "routeId": "Route",
+      "effectiveFrom": "Effective from",
+      "items": "Items (JSON)",
+      "publishedAt": "Published at",
+      "target": "Version type (version, rate, routePrice)",
+      "effectiveTo": "Effective until",
+      "limits": "Limits (JSON)",
+      "revokedAt": "Revoked at",
+      "window": "Window (minute, hour, day, month)",
+      "meter": "Meter (requests, credits, cost_nanos)",
+      "max": "Maximum"
     },
     "sections": {
       "products": "Products",
@@ -157,7 +173,9 @@
       "plans": "Plans",
       "versions": "Versions",
       "keys": "Keys",
-      "prices": "Feature prices"
+      "prices": "Feature prices",
+      "routes": "Routes",
+      "routePrices": "Route prices"
     }
   }
 }

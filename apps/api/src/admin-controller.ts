@@ -7,6 +7,7 @@ import {
   Headers,
   Inject,
   BadRequestException,
+  ConflictException,
 } from "@nestjs/common";
 import { z } from "zod";
 import { createHash, randomBytes } from "node:crypto";
@@ -19,7 +20,45 @@ const amount = z
   .string()
   .regex(/^[1-9][0-9]{0,18}$/)
   .refine((v) => BigInt(v) <= 9223372036854775807n);
+const limitRule = z.object({
+  scope: z.enum(["account", "actor"]),
+  window: z.enum(["minute", "hour", "day", "month"]),
+  meter: z.enum(["requests", "credits", "cost_nanos"]),
+  max: z.string().regex(/^(0|[1-9][0-9]{0,18})$/),
+  feature: name.optional(),
+});
 const actionSchema = z.discriminatedUnion("action", [
+  z.object({
+    action: z.literal("limitPolicy"),
+    productId: id,
+    window: limitRule.shape.window,
+    meter: limitRule.shape.meter,
+    max: limitRule.shape.max,
+  }),
+
+  z.object({
+    action: z.literal("endVersion"),
+    id,
+    effectiveTo: z.iso.datetime(),
+  }),
+
+  z.object({
+    action: z.literal("publish"),
+    target: z.enum(["version", "rate", "routePrice"]),
+    id,
+    effectiveFrom: z.iso.datetime(),
+  }),
+  z.object({ action: z.literal("revokeVersion"), id }),
+
+  z.object({
+    action: z.literal("routePrice"),
+    routeId: id,
+    version: z.number().int().positive(),
+    effectiveFrom: z.iso.datetime(),
+    items: z
+      .array(z.object({ meter: name, unitNanos: amount, per: amount }))
+      .min(1),
+  }),
   z.object({
     action: z.literal("price"),
     featureId: id,
@@ -57,6 +96,7 @@ const actionSchema = z.discriminatedUnion("action", [
     planId: id,
     version: z.number().int().positive(),
     creditGrants: z.record(z.string(), amount),
+    limits: z.record(z.string(), z.array(limitRule)).default({}),
     entitlements: z.record(
       z.string(),
       z.record(z.string(), z.union([z.boolean(), z.number(), z.string()])),
@@ -113,27 +153,51 @@ export class AdminController {
   @Get("catalog")
   async catalog(@Headers("authorization") auth?: string) {
     await this.staff.authorize(auth);
-    const [products, features, prices, rates, plans, versions, keys] =
-      await Promise.all([
-        this.db.product.findMany({ take: 100, orderBy: { createdAt: "desc" } }),
-        this.db.productFeature.findMany({ take: 100 }),
-        this.db.featurePrice.findMany({ take: 100 }),
-        this.db.creditRateVersion.findMany({ take: 100 }),
-        this.db.plan.findMany({ take: 100 }),
-        this.db.planVersion.findMany({ take: 100 }),
-        this.db.productApiKey.findMany({
-          take: 100,
-          select: {
-            id: true,
-            productId: true,
-            name: true,
-            prefix: true,
-            scopes: true,
-            status: true,
-          },
-        }),
-      ]);
-    return json({ products, features, prices, rates, plans, versions, keys });
+    const [
+      products,
+      features,
+      prices,
+      rates,
+      plans,
+      versions,
+      keys,
+      routes,
+      routePrices,
+    ] = await Promise.all([
+      this.db.product.findMany({ take: 100, orderBy: { createdAt: "desc" } }),
+      this.db.productFeature.findMany({ take: 100 }),
+      this.db.featurePrice.findMany({ take: 100 }),
+      this.db.creditRateVersion.findMany({ take: 100 }),
+      this.db.plan.findMany({ take: 100 }),
+      this.db.planVersion.findMany({ take: 100 }),
+      this.db.productApiKey.findMany({
+        take: 100,
+        select: {
+          id: true,
+          productId: true,
+          name: true,
+          prefix: true,
+          scopes: true,
+          status: true,
+        },
+      }),
+      this.db.modelRoute.findMany({ take: 100 }),
+      this.db.routePriceVersion.findMany({
+        take: 100,
+        include: { items: true },
+      }),
+    ]);
+    return json({
+      products,
+      features,
+      prices,
+      rates,
+      plans,
+      versions,
+      keys,
+      routes,
+      routePrices,
+    });
   }
   @Post("catalog")
   async change(
@@ -150,6 +214,68 @@ export class AdminController {
       let result: { id: string };
       let secret: string | undefined;
       switch (input.action) {
+        case "limitPolicy":
+          result = await tx.limitPolicy.create({
+            data: {
+              productId: input.productId,
+              scope: "product",
+              window: input.window,
+              meter: input.meter,
+              max: BigInt(input.max),
+            },
+          });
+          break;
+        case "endVersion":
+          result = await tx.planVersion.update({
+            where: { id: input.id },
+            data: { effectiveTo: new Date(input.effectiveTo) },
+          });
+          break;
+        case "publish": {
+          const args = {
+            where: { id: input.id, publishedAt: null },
+            data: {
+              publishedAt: now,
+              effectiveFrom: new Date(input.effectiveFrom),
+            },
+          };
+          if (args.data.effectiveFrom < now)
+            throw new BadRequestException({ code: "INVALID_EFFECTIVE_FROM" });
+          const rows =
+            input.target === "version"
+              ? await tx.planVersion.updateMany(args)
+              : input.target === "rate"
+                ? await tx.creditRateVersion.updateMany(args)
+                : await tx.routePriceVersion.updateMany(args);
+          if (rows.count !== 1)
+            throw new ConflictException({ code: "VERSION_NOT_DRAFT" });
+          result = { id: input.id };
+          break;
+        }
+        case "revokeVersion":
+          result = await tx.planVersion.update({
+            where: { id: input.id },
+            data: { revokedAt: now },
+          });
+          break;
+        case "routePrice":
+          result = await tx.routePriceVersion.create({
+            data: {
+              routeId: input.routeId,
+              version: input.version,
+              effectiveFrom: new Date(input.effectiveFrom),
+              source: "manual",
+              approvedBy: actorIdentityId,
+              items: {
+                create: input.items.map((item) => ({
+                  ...item,
+                  unitNanos: BigInt(item.unitNanos),
+                  per: BigInt(item.per),
+                })),
+              },
+            },
+          });
+          break;
         case "price":
           result = await tx.featurePrice.create({
             data: {
@@ -183,7 +309,6 @@ export class AdminController {
               productId: input.productId,
               version: input.version,
               creditValueMicros: BigInt(input.creditValueMicros),
-              publishedAt: now,
               effectiveFrom: now,
             },
           });
@@ -202,7 +327,7 @@ export class AdminController {
           const { action: _, ...data } = input;
           void _;
           result = await tx.planVersion.create({
-            data: { ...data, publishedAt: now, effectiveFrom: now },
+            data: { ...data, effectiveFrom: now },
           });
           break;
         }

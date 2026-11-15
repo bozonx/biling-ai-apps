@@ -1,3 +1,4 @@
+import { reserveLimits, closeLimits } from "./limits.js";
 import { accrueGrants } from "./accrual.js";
 import { effectiveEntitlements } from "./entitlements.js";
 import { satisfiesEntitlements } from "@billing/core";
@@ -284,7 +285,13 @@ export class WalletService {
   async reserve(
     productId: string,
     key: string,
-    input: { accountId: string; featureId: string; amountMilli: string },
+    input: {
+      accountId: string;
+      featureId: string;
+      amountMilli: string;
+      actorId?: string;
+      estimatedCostNanos?: string;
+    },
   ) {
     return this.db.$transaction(async (tx) => {
       await this.lock(tx, input.accountId, productId);
@@ -298,6 +305,11 @@ export class WalletService {
         if (
           prior.accountId !== input.accountId ||
           prior.featureId !== input.featureId ||
+          prior.actorId !== (input.actorId ?? null) ||
+          prior.estimatedCostNanos !==
+            (input.estimatedCostNanos === undefined
+              ? null
+              : BigInt(input.estimatedCostNanos)) ||
           prior.amountMilli !== BigInt(input.amountMilli)
         )
           fail("IDEMPOTENCY_CONFLICT");
@@ -344,12 +356,30 @@ export class WalletService {
         wallet.balanceMilli - wallet.heldMilli < amount
       )
         fail("INSUFFICIENT_CREDITS");
+      const limitReservations = await reserveLimits(
+        tx,
+        productId,
+        amount,
+        input.accountId,
+        input.featureId,
+        entitlements.limits,
+        input.actorId,
+        feature.key,
+        input.estimatedCostNanos === undefined
+          ? undefined
+          : BigInt(input.estimatedCostNanos),
+      );
       const hold = await tx.creditHold.create({
         data: {
           ...input,
           amountMilli: amount,
+          estimatedCostNanos:
+            input.estimatedCostNanos === undefined
+              ? null
+              : BigInt(input.estimatedCostNanos),
           productId,
           idempotencyKey: key,
+          limitReservations,
           expiresAt: new Date(Date.now() + feature.defaultHoldTtlSec * 1000),
         },
       });
@@ -425,7 +455,9 @@ export class WalletService {
             featureId: hold.featureId!,
             holdId,
             operationId: operation.id,
-            costSource: "unknown",
+            costSource:
+              hold.estimatedCostNanos === null ? "unknown" : "estimate",
+            costNanos: hold.estimatedCostNanos ?? 0n,
             status: "ok",
             creditsChargedMilli: hold.amountMilli,
             idempotencyKey: `commit:${hold.id}`,
@@ -471,6 +503,7 @@ export class WalletService {
           version: { increment: 1 },
         },
       });
+      await closeLimits(tx, hold.limitReservations, action === "commit");
       return tx.creditHold.update({
         where: { id: holdId },
         data: {

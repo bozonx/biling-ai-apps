@@ -95,3 +95,41 @@ test("JWT validation rejects untrusted claims and enforces staff roles", async (
     );
   }
 });
+
+test("publication only transitions a draft and rejects past effective dates", async () => {
+  const calls: unknown[] = [];
+  const tx = {
+    creditRateVersion: {
+      updateMany: async (args: unknown) => {
+        calls.push(args);
+        return { count: 1 };
+      },
+    },
+    adminAuditLog: { create: async () => ({}) },
+  };
+  const controller = new AdminController(
+    {
+      $transaction: async (fn: (value: unknown) => unknown) => fn(tx),
+    } as unknown as Database,
+    {} as WalletService,
+    { authorize: async () => "staff" } as unknown as StaffAccess,
+  );
+  const id = "019a85e0-1111-7111-8111-111111111111";
+  await controller.change("Bearer staff", {
+    action: "publish",
+    target: "rate",
+    id,
+    effectiveFrom: "2099-01-01T00:00:00Z",
+  });
+  expect(calls).toHaveLength(1);
+  expect(calls[0]).toMatchObject({ where: { id, publishedAt: null } });
+  await expect(
+    controller.change("Bearer staff", {
+      action: "publish",
+      target: "rate",
+      id,
+      effectiveFrom: "2000-01-01T00:00:00Z",
+    }),
+  ).rejects.toThrow();
+  expect(calls).toHaveLength(1);
+});

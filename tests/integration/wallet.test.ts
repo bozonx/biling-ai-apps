@@ -50,10 +50,29 @@ test("wallet transactions serialize reservations and preserve an append-only led
         amountMilli: "9223372036854775807",
       }),
     ).rejects.toThrow();
+    const policy = await db.limitPolicy.create({
+      data: {
+        productId: product.id,
+        scope: "product",
+        window: "day",
+        meter: "requests",
+        max: 1n,
+      },
+    });
+    const costPolicy = await db.limitPolicy.create({
+      data: {
+        productId: product.id,
+        scope: "product",
+        window: "day",
+        meter: "cost_nanos",
+        max: 5n,
+      },
+    });
     const expiring = await service.reserve(product.id, "expires", {
       accountId: account.id,
       featureId: feature.id,
       amountMilli: "100",
+      estimatedCostNanos: "5",
     });
     await db.creditHold.update({
       where: { id: expiring.id },
@@ -72,6 +91,7 @@ test("wallet transactions serialize reservations and preserve an append-only led
           accountId: account.id,
           featureId: feature.id,
           amountMilli: "700",
+          estimatedCostNanos: "5",
         }),
       ),
     );
@@ -89,6 +109,30 @@ test("wallet transactions serialize reservations and preserve an append-only led
     expect(await service.balance(account.id, product.id)).toMatchObject({
       balanceMilli: 300n,
       heldMilli: 0n,
+    });
+    const window = await db.limitUsageWindow.findFirstOrThrow({
+      where: { scopeKey: `policy:${policy.id}` },
+    });
+    expect(window).toMatchObject({ consumed: 1n, reserved: 0n });
+    await expect(
+      service.reserve(product.id, "limited", {
+        accountId: account.id,
+        featureId: feature.id,
+        amountMilli: "1",
+      }),
+    ).rejects.toMatchObject({ status: 429 });
+    await db.limitPolicy.update({
+      where: { id: policy.id },
+      data: { isActive: false },
+    });
+    expect(
+      await db.limitUsageWindow.findFirstOrThrow({
+        where: { scopeKey: `policy:${costPolicy.id}` },
+      }),
+    ).toMatchObject({ consumed: 5n, reserved: 0n });
+    await db.limitPolicy.update({
+      where: { id: costPolicy.id },
+      data: { isActive: false },
     });
     expect(await db.creditLedgerEntry.count()).toBe(2);
     expect(await db.usageEvent.count()).toBe(1);
@@ -140,6 +184,11 @@ test("wallet transactions serialize reservations and preserve an append-only led
         effectiveFrom: new Date(),
         publishedAt: new Date(),
         entitlements: { [product.code]: { "ai.enabled": true } },
+        limits: {
+          [product.code]: [
+            { scope: "account", window: "day", meter: "requests", max: "10" },
+          ],
+        },
       },
     });
     await db.planGrant.create({
@@ -154,6 +203,26 @@ test("wallet transactions serialize reservations and preserve an append-only led
     });
     expect(await service.entitlements(account.id, product.id)).toEqual({
       "ai.enabled": true,
+    });
+    const override = await db.limitOverride.create({
+      data: {
+        accountId: account.id,
+        productId: product.id,
+        createdBy: identity.id,
+        reason: "Test",
+        rule: { scope: "account", window: "day", meter: "requests", max: "0" },
+      },
+    });
+    await expect(
+      service.reserve(product.id, "override-denied", {
+        accountId: account.id,
+        featureId: feature.id,
+        amountMilli: "1",
+      }),
+    ).rejects.toMatchObject({ status: 429 });
+    await db.limitOverride.update({
+      where: { id: override.id },
+      data: { revokedAt: new Date() },
     });
     const released = await service.reserve(product.id, "release", {
       accountId: account.id,

@@ -1,3 +1,5 @@
+import { resolveLimits, type LimitRule } from "@billing/core";
+import { z } from "zod";
 import { ConflictException, NotFoundException } from "@nestjs/common";
 import { resolveEntitlements, type EntitlementValue } from "@billing/core";
 import type { Prisma } from "./generated/prisma/client.js";
@@ -20,6 +22,14 @@ export async function effectiveEntitlements(
     throw new NotFoundException({ code: "ACCOUNT_OR_PRODUCT_NOT_FOUND" });
   const definitions = await tx.productEntitlementKey.findMany({
     where: { productId },
+  });
+  const limitSources: LimitRule[][] = [];
+  const limitSchema = z.object({
+    scope: z.enum(["account", "actor"]),
+    window: z.enum(["minute", "hour", "day", "month"]),
+    meter: z.enum(["credits", "requests", "cost_nanos"]),
+    max: z.string().regex(/^(0|[1-9][0-9]{0,18})$/),
+    feature: z.string().optional(),
   });
   const sources: { values: Record<string, unknown>; readOnly?: boolean }[] = [];
   if (account.status === "active" && product.status === "active") {
@@ -67,6 +77,9 @@ export async function effectiveEntitlements(
         !version.plan.productScope.includes(product.code)
       )
         continue;
+      const rawLimits = object(version.limits)[product.code];
+      if (rawLimits !== undefined)
+        limitSources.push(z.array(limitSchema).parse(rawLimits));
       const values = object(version.entitlements)[product.code];
       if (values !== undefined)
         sources.push({
@@ -94,5 +107,18 @@ export async function effectiveEntitlements(
   } catch {
     throw new ConflictException({ code: "INVALID_ENTITLEMENT_CONFIGURATION" });
   }
-  return { definitions, values };
+  const limitOverrides = await tx.limitOverride.findMany({
+    where: {
+      accountId,
+      productId,
+      revokedAt: null,
+      OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+    },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+  });
+  const limits = resolveLimits(
+    limitSources,
+    limitOverrides.map((override) => limitSchema.parse(override.rule)),
+  );
+  return { definitions, values, limits };
 }

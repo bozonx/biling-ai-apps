@@ -121,7 +121,12 @@
       "key": "Выпуск ключа",
       "revokeKey": "Отзыв ключа",
       "credits": "Ручное начисление",
-      "price": "Цена функции"
+      "price": "Цена функции",
+      "routePrice": "Создать таблицу себестоимости",
+      "publish": "Опубликовать версию",
+      "revokeVersion": "Отозвать версию тарифа",
+      "endVersion": "Завершить действие версии",
+      "limitPolicy": "Добавить лимит продукта"
     },
     "fields": {
       "code": "Код",
@@ -148,7 +153,18 @@
       "unit": "Единица",
       "per": "Количество единиц",
       "status": "Статус",
-      "prefix": "Префикс"
+      "prefix": "Префикс",
+      "routeId": "Маршрут",
+      "effectiveFrom": "Действует с",
+      "items": "Позиции (JSON)",
+      "publishedAt": "Опубликовано",
+      "target": "Тип версии (version, rate, routePrice)",
+      "effectiveTo": "Действует до",
+      "limits": "Лимиты (JSON)",
+      "revokedAt": "Отозвано",
+      "window": "Окно (minute, hour, day, month)",
+      "meter": "Счётчик (requests, credits, cost_nanos)",
+      "max": "Максимум"
     },
     "sections": {
       "products": "Продукты",
@@ -157,7 +173,9 @@
       "plans": "Тарифы",
       "versions": "Версии",
       "keys": "API-ключи",
-      "prices": "Цены функций"
+      "prices": "Цены функций",
+      "routes": "Маршруты",
+      "routePrices": "Себестоимость"
     }
   }
 }

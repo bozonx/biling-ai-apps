@@ -888,6 +888,7 @@ model CreditHold {
   /// окна лимитов, в которых резерв занял `reserved`: [{ scopeKey, windowStart, meter, amount }]
   /// — по ним release/expire возвращают ровно то, что заняли, даже если правила сменились
   limitReservations   Json       @default("[]")
+  estimatedCostNanos  BigInt?
   createdAt           DateTime   @default(now()) @db.Timestamptz(3)
 
   account           BillingAccount     @relation(fields: [accountId], references: [id], onDelete: Restrict)

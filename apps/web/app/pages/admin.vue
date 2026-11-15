@@ -11,6 +11,11 @@ const secret = ref("");
 const catalog = ref<Record<string, unknown[]>>({});
 const values = reactive<Record<string, string>>({});
 const definitions: Record<string, string[]> = {
+  limitPolicy: ["productId", "window", "meter", "max"],
+  endVersion: ["id", "effectiveTo"],
+  publish: ["target", "id", "effectiveFrom"],
+  revokeVersion: ["id"],
+  routePrice: ["routeId", "version", "effectiveFrom", "items"],
   price: ["featureId", "version", "creditsMilli", "unit", "per"],
   product: ["code", "name"],
   feature: ["productId", "key", "pricing"],
@@ -20,6 +25,7 @@ const definitions: Record<string, string[]> = {
     "planId",
     "version",
     "creditGrants",
+    "limits",
     "entitlements",
     "creditGrantInterval",
     "creditGrantIntervalCount",
@@ -29,12 +35,39 @@ const definitions: Record<string, string[]> = {
   credits: ["productId", "accountId", "amountMilli", "creditRateVersionId"],
 };
 const columns: Record<string, string[]> = {
+  routes: ["id", "key"],
+  routePrices: [
+    "id",
+    "routeId",
+    "version",
+    "effectiveFrom",
+    "items",
+    "publishedAt",
+  ],
   products: ["id", "code", "name", "status"],
   features: ["id", "productId", "key", "pricing", "status"],
   prices: ["id", "featureId", "version", "creditsMilli", "unit", "per"],
-  rates: ["id", "productId", "version", "creditValueMicros"],
+  rates: [
+    "id",
+    "productId",
+    "version",
+    "creditValueMicros",
+    "publishedAt",
+    "effectiveFrom",
+  ],
   plans: ["id", "code", "name", "kind", "productScope"],
-  versions: ["id", "planId", "version", "creditGrants", "entitlements"],
+  versions: [
+    "id",
+    "planId",
+    "version",
+    "creditGrants",
+    "entitlements",
+    "limits",
+    "publishedAt",
+    "effectiveFrom",
+    "effectiveTo",
+    "revokedAt",
+  ],
   keys: ["id", "productId", "name", "prefix", "scopes", "status"],
 };
 function cell(row: unknown, field: string) {
@@ -93,7 +126,7 @@ async function save() {
               .split(",")
               .map((v) => v.trim())
               .filter(Boolean)
-          : ["creditGrants", "entitlements"].includes(field)
+          : ["creditGrants", "entitlements", "items", "limits"].includes(field)
             ? JSON.parse(value)
             : value;
     }
@@ -156,7 +189,11 @@ function disconnect() {
           :label="t(`admin.fields.${field}`)"
         >
           <UTextarea
-            v-if="['creditGrants', 'entitlements'].includes(field)"
+            v-if="
+              ['creditGrants', 'entitlements', 'items', 'limits'].includes(
+                field,
+              )
+            "
             v-model="values[field]"
             class="w-full"
           />

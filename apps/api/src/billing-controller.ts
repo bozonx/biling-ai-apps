@@ -29,7 +29,17 @@ const grantSchema = z
   })
   .strict();
 const reserveSchema = z
-  .object({ accountId: z.uuid(), amountMilli: amount, featureId: z.uuid() })
+  .object({
+    accountId: z.uuid(),
+    amountMilli: amount,
+    featureId: z.uuid(),
+    actorId: z.uuid().optional(),
+    estimatedCostNanos: z
+      .string()
+      .regex(/^(0|[1-9][0-9]{0,18})$/)
+      .refine((v) => BigInt(v) <= 9223372036854775807n)
+      .optional(),
+  })
   .strict();
 function parse<T>(schema: z.ZodType<T>, value: unknown): T {
   const result = schema.safeParse(value);

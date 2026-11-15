@@ -45,7 +45,13 @@ export class BillingClient {
     );
   }
   async reserve(
-    input: { accountId: string; featureId: string; amountMilli: string },
+    input: {
+      accountId: string;
+      featureId: string;
+      amountMilli: string;
+      actorId?: string;
+      estimatedCostNanos?: string;
+    },
     apiKey: string,
     idempotencyKey: string,
   ) {

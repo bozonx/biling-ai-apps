@@ -13,3 +13,4 @@ export type {
 
 export { accrualBoundary } from "./accrual.js";
 export { applyCreditGrant } from "./billing.js";
+export { resolveLimits, limitWindow, type LimitRule } from "./limits.js";
