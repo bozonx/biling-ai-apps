@@ -539,10 +539,16 @@ export class WalletService {
       }
       const late =
         action === "commit" &&
-        (hold.status === "expired" || hold.expiresAt <= new Date());
+        (hold.status === "expired" ||
+          hold.status === "released" ||
+          hold.expiresAt <= new Date());
       if (
         hold.status !== "open" &&
-        !(hold.status === "expired" && late && metered)
+        !(
+          (hold.status === "expired" || hold.status === "released") &&
+          late &&
+          metered
+        )
       )
         fail("HOLD_CLOSED");
       if (late && !metered) fail("HOLD_EXPIRED");

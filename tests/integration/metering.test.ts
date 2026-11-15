@@ -262,6 +262,20 @@ test("gateway reserves, records provider usage durably and retries commit across
         status: "ok",
       }),
     ).rejects.toThrow();
+    const released = await wallets.reserveMetered(product.id, "released-late", {
+      accountId: account.id,
+      featureId: feature.id,
+      routeId: route.id,
+      meters: { input_tokens: "1", output_tokens: "1" },
+    });
+    await wallets.close(product.id, released.hold.id, "release");
+    await wallets.close(product.id, released.hold.id, "commit", undefined, {
+      meters: { input_tokens: "0", output_tokens: "0" },
+      status: "partial",
+    });
+    expect(
+      await db.usageEvent.findFirst({ where: { holdId: released.hold.id } }),
+    ).toMatchObject({ isLate: true, status: "partial" });
     const zero = await wallets.reserveMetered(product.id, "zero", {
       accountId: account.id,
       featureId: feature.id,

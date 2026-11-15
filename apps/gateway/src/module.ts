@@ -98,6 +98,8 @@ export class GatewayService implements OnModuleInit, OnModuleDestroy {
     }
     let result;
     let captured = false;
+    let capturedUsage:
+      Parameters<BillingClient["commitMetered"]>[2] | undefined;
     try {
       result = await generate(
         route,
@@ -112,15 +114,30 @@ export class GatewayService implements OnModuleInit, OnModuleDestroy {
         },
         fetch,
         async (usage) => {
+          capturedUsage = usage;
           await this.outbox.enqueue(
             key,
-            { holdId: hold.id, action: "commit", usage },
+            {
+              holdId: hold.id,
+              action: "commit",
+              usage,
+            },
             null,
           );
           captured = true;
         },
       );
     } catch (error) {
+      if (capturedUsage)
+        await this.outbox.enqueue(
+          key,
+          {
+            holdId: hold.id,
+            action: "commit",
+            usage: { ...capturedUsage, status: "partial" },
+          },
+          { error: { code: "PROVIDER_FAILED" } },
+        );
       if (!captured && error instanceof ProviderRejected)
         await this.outbox.enqueue(
           key,
