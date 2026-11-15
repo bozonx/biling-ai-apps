@@ -40,3 +40,29 @@ export const accountContextSchema = z.object({
 export type AccountContext = z.infer<typeof accountContextSchema>;
 export type Wallet = z.infer<typeof walletSchema>;
 export type Operation = z.infer<typeof operationSchema>;
+
+export const holdSchema = z.object({
+  id: z.uuid(),
+  accountId: z.uuid(),
+  productId: z.uuid(),
+  amountMilli: unsignedInteger,
+  committedMilli: unsignedInteger,
+  status: z.enum(["open", "committed", "released", "expired"]),
+  expiresAt: z.iso.datetime(),
+});
+export const entitlementsSchema = z.object({
+  entitlements: z.record(
+    z.string(),
+    z.union([z.boolean(), z.number(), z.string()]),
+  ),
+});
+export const usageSchema = z.array(
+  z.object({
+    id: z.uuid(),
+    accountId: z.uuid(),
+    productId: z.uuid(),
+    creditsChargedMilli: unsignedInteger,
+    occurredAt: z.iso.datetime(),
+    status: z.string(),
+  }),
+);

@@ -185,6 +185,22 @@ test("wallet transactions serialize reservations and preserve an append-only led
         amountMilli: "100",
       }),
     ).rejects.toMatchObject({ response: { code: "INSUFFICIENT_CREDITS" } });
+    expect(await service.balance(account.id, product.id)).toMatchObject({
+      balanceMilli: 0n,
+      heldMilli: 0n,
+      nextExpiryAt: null,
+    });
+    expect(await db.creditOperation.count({ where: { kind: "expiry" } })).toBe(
+      1,
+    );
+    await service.balance(account.id, product.id);
+    expect(await db.creditOperation.count({ where: { kind: "expiry" } })).toBe(
+      1,
+    );
+    expect(
+      (await db.creditLedgerEntry.aggregate({ _sum: { amountMilli: true } }))
+        ._sum.amountMilli,
+    ).toBe(0n);
   } finally {
     await db.$disconnect();
     if (previous === undefined) delete process.env.DATABASE_URL;

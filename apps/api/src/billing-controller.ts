@@ -62,10 +62,17 @@ export class BillingController {
       throw new UnauthorizedException({ code: "INVALID_API_KEY" });
     if (!key.scopes.includes(scope))
       throw new ForbiddenException({ code: "INSUFFICIENT_SCOPE" });
-    await this.db.productApiKey.update({
-      where: { id: key.id },
-      data: { lastUsedAt: new Date() },
-    });
+    const now = new Date();
+    const cutoff = new Date(now.getTime() - 60_000);
+    if (!key.lastUsedAt || key.lastUsedAt < cutoff) {
+      await this.db.productApiKey.updateMany({
+        where: {
+          id: key.id,
+          OR: [{ lastUsedAt: null }, { lastUsedAt: { lt: cutoff } }],
+        },
+        data: { lastUsedAt: now },
+      });
+    }
     return key.productId;
   }
   private key(value: unknown) {

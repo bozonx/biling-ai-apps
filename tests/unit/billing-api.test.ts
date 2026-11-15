@@ -23,7 +23,7 @@ test("S2S rejects missing keys and scopes and derives product exclusively from t
   };
   const controller = new BillingController(
     {
-      productApiKey: { findUnique: lookup, update: async () => ({}) },
+      productApiKey: { findUnique: lookup, updateMany: async () => ({}) },
     } as unknown as Database,
     { balance } as unknown as WalletService,
   );

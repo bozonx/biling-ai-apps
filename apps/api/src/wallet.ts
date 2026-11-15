@@ -40,6 +40,72 @@ export class WalletService {
     });
   }
 
+  private async expireBuckets(
+    tx: Transaction,
+    accountId: string,
+    productId: string,
+  ) {
+    const now = new Date();
+    let wallet = await tx.creditWallet.findUniqueOrThrow({
+      where: { accountId_productId: { accountId, productId } },
+    });
+    const buckets = await tx.creditBucket.findMany({
+      where: { accountId, productId, expiredAt: null, expiresAt: { lte: now } },
+      orderBy: [{ expiresAt: "asc" }, { id: "asc" }],
+    });
+    for (const bucket of buckets) {
+      if (bucket.remainingMilli > 0n) {
+        const operation = await tx.creditOperation.create({
+          data: {
+            accountId,
+            productId,
+            kind: "expiry",
+            operationKey: `expiry:${bucket.id}`,
+            walletSeq: wallet.lastOperationSeq + 1n,
+            balanceAfterMilli: wallet.balanceMilli - bucket.remainingMilli,
+            debtAfterMilli: wallet.debtMilli,
+          },
+        });
+        await tx.creditLedgerEntry.create({
+          data: {
+            accountId,
+            productId,
+            operationId: operation.id,
+            bucketId: bucket.id,
+            amountMilli: -bucket.remainingMilli,
+            reason: "expiry",
+          },
+        });
+        wallet = await tx.creditWallet.update({
+          where: { accountId_productId: { accountId, productId } },
+          data: {
+            balanceMilli: { decrement: bucket.remainingMilli },
+            lastOperationSeq: { increment: 1 },
+            version: { increment: 1 },
+          },
+        });
+      }
+      await tx.creditBucket.update({
+        where: { id: bucket.id },
+        data: { remainingMilli: 0n, expiredAt: now },
+      });
+    }
+    const next = await tx.creditBucket.findFirst({
+      where: {
+        accountId,
+        productId,
+        expiredAt: null,
+        remainingMilli: { gt: 0n },
+        expiresAt: { not: null },
+      },
+      orderBy: { expiresAt: "asc" },
+    });
+    return tx.creditWallet.update({
+      where: { accountId_productId: { accountId, productId } },
+      data: { nextExpiryAt: next?.expiresAt ?? null },
+    });
+  }
+
   private sameGrant(
     meta: unknown,
     input: {
@@ -104,18 +170,10 @@ export class WalletService {
   }
 
   async balance(accountId: string, productId: string) {
-    const wallet = await this.db.creditWallet.findUnique({
-      where: { accountId_productId: { accountId, productId } },
+    return this.db.$transaction(async (tx) => {
+      await this.lock(tx, accountId, productId);
+      return this.expireBuckets(tx, accountId, productId);
     });
-    if (!wallet)
-      return {
-        accountId,
-        productId,
-        balanceMilli: 0n,
-        heldMilli: 0n,
-        debtMilli: 0n,
-      };
-    return wallet;
   }
 
   async grant(
@@ -128,7 +186,8 @@ export class WalletService {
     },
   ) {
     return this.db.$transaction(async (tx) => {
-      const wallet = await this.lock(tx, input.accountId, productId);
+      await this.lock(tx, input.accountId, productId);
+      const wallet = await this.expireBuckets(tx, input.accountId, productId);
       const prior = await tx.creditOperation.findUnique({
         where: { productId_operationKey: { productId, operationKey: key } },
       });
@@ -208,7 +267,8 @@ export class WalletService {
     input: { accountId: string; featureId: string; amountMilli: string },
   ) {
     return this.db.$transaction(async (tx) => {
-      const wallet = await this.lock(tx, input.accountId, productId);
+      await this.lock(tx, input.accountId, productId);
+      const wallet = await this.expireBuckets(tx, input.accountId, productId);
       const prior = await tx.creditHold.findUnique({
         where: { productId_idempotencyKey: { productId, idempotencyKey: key } },
       });
