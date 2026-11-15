@@ -7,10 +7,7 @@
 //  - Только дописываются (триггер запрещает UPDATE/DELETE): CreditOperation,
 //    CreditLedgerEntry, UsageEvent, PaymentRefund, SubscriptionEvent.
 //  - Версии после publishedAt неизменяемы (триггер, инвариант 7).
-//  - Большие таблицы (CreditLedgerEntry, UsageEvent) партиционируются по
-//    диапазону id (UUIDv7 упорядочен по времени): уникальных индексов, кроме PK,
-//    на них нет — идемпотентность живёт в узких таблицах CreditOperation и
-//    UsageEventKey (§18).
+//  - Tables are not partitioned. Idempotency uses dedicated operation keys.
 //  - Ссылки на UsageEvent и из него — мягкие (без FK).
 //  - Prisma не управляет CHECK и триггерами — они в сырых миграциях
 //    (помечены «RAW»). Частичных индексов и NULLS NOT DISTINCT нет намеренно:
@@ -164,7 +161,6 @@ enum UsageStatus {
   ok
   error
   partial
-  late
 }
 
 enum ModelRouteKind {
@@ -355,6 +351,7 @@ enum StaffRoleKind {
 // ============================================================================
 
 model Product {
+  display   Json          @default("{}")
   id        String        @id @default(uuid(7)) @db.Uuid
   /// неизменяем после создания
   code      String        @unique // 'tyco', 'fastcat'
@@ -438,6 +435,7 @@ model Identity {
 /// RAW: CHECK ((kind = 'personal') = (personalOwnerId IS NOT NULL))
 /// RAW: CHECK (personalOwnerId IS NULL OR personalOwnerId = ownerIdentityId)
 model BillingAccount {
+  locale          String        @default("en-US")
   id              String        @id @default(uuid(7)) @db.Uuid
   kind            AccountKind   @default(personal)
   ownerIdentityId String?       @db.Uuid
@@ -533,6 +531,7 @@ model MarkupPolicyVersion {
 }
 
 model Plan {
+  display      Json       @default("{}")
   id           String     @id @default(uuid(7)) @db.Uuid
   /// коды продуктов (Product.code), которые покрывает тариф; бандл — несколько
   productScope String[]
@@ -550,6 +549,7 @@ model Plan {
 
 /// Неизменяема после publishedAt (инвариант 7)
 model PlanVersion {
+  revokedAt          DateTime? @db.Timestamptz(3)
   id                 String    @id @default(uuid(7)) @db.Uuid
   planId             String    @db.Uuid
   version            Int
@@ -608,11 +608,12 @@ model Offer {
   scheduledSubscriptions Subscription[] @relation("SubscriptionScheduledOffer")
   payments               Payment[]
 
-  @@unique([source, externalPriceId])
+  @@index([source, externalPriceId])
   @@index([planVersionId])
 }
 
 model CreditPack {
+  display      Json       @default("{}")
   id           String     @id @default(uuid(7)) @db.Uuid
   productId    String     @db.Uuid
   code         String
@@ -649,6 +650,7 @@ model CreditPackOffer {
 
 /// Реестр платных действий продукта (§7.1)
 model ProductFeature {
+  display           Json           @default("{}")
   id                String         @id @default(uuid(7)) @db.Uuid
   productId         String         @db.Uuid
   key               String
@@ -672,6 +674,8 @@ model ProductFeature {
 
 /// Фиксированная цена действия, версионно (§10.5)
 model FeaturePrice {
+  unit          String    @default("action")
+  per           BigInt    @default(1)
   id            String    @id @default(uuid(7)) @db.Uuid
   featureId     String    @db.Uuid
   version       Int
@@ -725,19 +729,24 @@ model PromotionRedemption {
 /// Материализация + строка блокировки (SELECT ... FOR UPDATE).
 /// RAW: CHECK (balanceMilli >= 0 AND heldMilli >= 0 AND debtMilli >= 0)
 model CreditWallet {
-  accountId    String   @db.Uuid
-  productId    String   @db.Uuid
-  balanceMilli BigInt   @default(0)
-  heldMilli    BigInt   @default(0)
-  debtMilli    BigInt   @default(0)
-  version      Int      @default(0)
-  createdAt    DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt    DateTime @updatedAt @db.Timestamptz(3)
+  lastOperationSeq BigInt    @default(0)
+  nextAccrualAt    DateTime? @db.Timestamptz(3)
+  nextExpiryAt     DateTime? @db.Timestamptz(3)
+  accountId        String    @db.Uuid
+  productId        String    @db.Uuid
+  balanceMilli     BigInt    @default(0)
+  heldMilli        BigInt    @default(0)
+  debtMilli        BigInt    @default(0)
+  version          Int       @default(0)
+  createdAt        DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime  @updatedAt @db.Timestamptz(3)
 
   account BillingAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
   product Product        @relation(fields: [productId], references: [id], onDelete: Restrict)
 
   @@id([accountId, productId])
+  @@index([nextAccrualAt])
+  @@index([nextExpiryAt])
 }
 
 /// Идемпотентная операция над кошельком: одна строка на бизнес-операцию,
@@ -749,20 +758,25 @@ model CreditWallet {
 /// Поэтому повторная обработка вебхука или параллельное ленивое начисление
 /// не создают второй партии. Только дописывается (RAW-триггер).
 model CreditOperation {
-  id           String              @id @default(uuid(7)) @db.Uuid
-  accountId    String              @db.Uuid
-  productId    String              @db.Uuid
-  kind         CreditOperationKind
-  operationKey String
-  actorId      String?             @db.Uuid // мягкая ссылка на Identity
-  meta         Json                @default("{}")
-  createdAt    DateTime            @default(now()) @db.Timestamptz(3)
+  walletSeq         BigInt
+  balanceAfterMilli BigInt
+  debtAfterMilli    BigInt
+  id                String              @id @default(uuid(7)) @db.Uuid
+  accountId         String              @db.Uuid
+  productId         String              @db.Uuid
+  kind              CreditOperationKind
+  operationKey      String
+  actorId           String?             @db.Uuid // мягкая ссылка на Identity
+  meta              Json                @default("{}")
+  createdAt         DateTime            @default(now()) @db.Timestamptz(3)
 
   account       BillingAccount      @relation(fields: [accountId], references: [id], onDelete: Restrict)
   product       Product             @relation(fields: [productId], references: [id], onDelete: Restrict)
   ledgerEntries CreditLedgerEntry[]
   buckets       CreditBucket[]
 
+  @@unique([accountId, productId, walletSeq])
+  @@unique([id, accountId, productId])
   @@unique([productId, operationKey])
   @@index([accountId, productId, createdAt])
 }
@@ -791,12 +805,13 @@ model CreditBucket {
   ledgerEntries     CreditLedgerEntry[]
   purchase          Purchase?
 
+  @@unique([id, accountId, productId])
   @@index([accountId, productId, expiresAt])
   @@index([sourceType, sourceId])
   @@index([expiredAt, expiresAt]) // воркер сгорания: expiredAt IS NULL AND expiresAt < now()
 }
 
-/// Только дописывается (RAW-триггер). Партиционируется по диапазону id.
+/// Только дописывается (RAW-триггер). No partitioning.
 /// Идемпотентность — у CreditOperation.
 /// RAW: CHECK (amountMilli <> 0)
 /// RAW: CHECK ((bucketId IS NULL) = (reason = 'debt'))
@@ -821,6 +836,7 @@ model CreditLedgerEntry {
   bucket    CreditBucket?   @relation(fields: [bucketId], references: [id], onDelete: Restrict)
   payment   Payment?        @relation(fields: [paymentId], references: [id], onDelete: Restrict)
 
+  @@index([usageEventId])
   @@index([accountId, productId, createdAt])
   @@index([operationId])
   @@index([bucketId])
@@ -869,9 +885,13 @@ model CreditHold {
 // ============================================================================
 
 /// Без FK (инвариант 12). Только дописывается (RAW-триггер).
-/// Партиционируется по диапазону id; идемпотентность — в UsageEventKey.
+/// No partitioning; идемпотентность — в UsageEventKey.
 /// provider/model пусты у действий без модели (фиксированная цена, системные).
 model UsageEvent {
+  operationId           String?     @db.Uuid
+  planVersionId         String?     @db.Uuid
+  isLate                Boolean     @default(false)
+  costSource            String
   id                    String      @id @default(uuid(7)) @db.Uuid
   accountId             String      @db.Uuid
   productId             String      @db.Uuid
@@ -898,6 +918,9 @@ model UsageEvent {
   occurredAt            DateTime    @db.Timestamptz(3)
   createdAt             DateTime    @default(now()) @db.Timestamptz(3)
 
+  @@index([actorId, occurredAt])
+  @@index([operationId])
+  @@index([planVersionId, occurredAt])
   @@index([accountId, productId, occurredAt])
   @@index([productId, occurredAt])
   @@index([provider, occurredAt])
@@ -905,7 +928,7 @@ model UsageEvent {
   @@index([holdId])
 }
 
-/// Идемпотентность UsageEvent вне партиционированной таблицы. Узкая; строки
+/// Идемпотентность UsageEvent в отдельной таблице. Узкая; строки
 /// старше срока хранения ключей (настройка, ≥ окна позднего commit) удаляются.
 model UsageEventKey {
   productId      String   @db.Uuid
@@ -1083,31 +1106,34 @@ model Purchase {
 /// подписка может позже сменить тариф.
 /// RAW: CHECK (subscriptionId IS NULL OR purchaseId IS NULL)
 model Payment {
-  id             String        @id @default(uuid(7)) @db.Uuid
-  accountId      String        @db.Uuid
-  subscriptionId String?       @db.Uuid
-  purchaseId     String?       @db.Uuid
-  planVersionId  String?       @db.Uuid
-  offerId        String?       @db.Uuid
-  source         PaymentSource
-  externalId     String
-  kind           PaymentKind
-  status         PaymentStatus
-  currency       String        @db.Char(3)
-  grossMicros    BigInt
-  taxMicros      BigInt        @default(0)
-  feeMicros      BigInt        @default(0)
-  discountMicros BigInt        @default(0)
-  netMicros      BigInt
-  grossUsdMicros BigInt
-  netUsdMicros   BigInt
-  fxRate         Decimal       @db.Decimal(20, 10)
-  fxSource       String
-  netIsEstimated Boolean       @default(false)
-  refundedMicros BigInt        @default(0) // материализация Σ PaymentRefund
-  occurredAt     DateTime      @db.Timestamptz(3)
-  createdAt      DateTime      @default(now()) @db.Timestamptz(3)
-  updatedAt      DateTime      @updatedAt @db.Timestamptz(3)
+  periodStart       DateTime?     @db.Timestamptz(3)
+  periodEnd         DateTime?     @db.Timestamptz(3)
+  revenueAllocation Json          @default("{}")
+  id                String        @id @default(uuid(7)) @db.Uuid
+  accountId         String        @db.Uuid
+  subscriptionId    String?       @db.Uuid
+  purchaseId        String?       @db.Uuid
+  planVersionId     String?       @db.Uuid
+  offerId           String?       @db.Uuid
+  source            PaymentSource
+  externalId        String
+  kind              PaymentKind
+  status            PaymentStatus
+  currency          String        @db.Char(3)
+  grossMicros       BigInt
+  taxMicros         BigInt        @default(0)
+  feeMicros         BigInt        @default(0)
+  discountMicros    BigInt        @default(0)
+  netMicros         BigInt
+  grossUsdMicros    BigInt
+  netUsdMicros      BigInt
+  fxRate            Decimal       @db.Decimal(20, 10)
+  fxSource          String
+  netIsEstimated    Boolean       @default(false)
+  refundedMicros    BigInt        @default(0) // материализация Σ PaymentRefund
+  occurredAt        DateTime      @db.Timestamptz(3)
+  createdAt         DateTime      @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime      @updatedAt @db.Timestamptz(3)
 
   account       BillingAccount      @relation(fields: [accountId], references: [id], onDelete: Restrict)
   subscription  Subscription?       @relation(fields: [subscriptionId], references: [id], onDelete: Restrict)
@@ -1138,7 +1164,7 @@ model PaymentRefund {
 
   payment Payment @relation(fields: [paymentId], references: [id], onDelete: Restrict)
 
-  @@unique([source, externalId])
+  @@unique([source, externalId, kind])
   @@index([paymentId])
 }
 
@@ -1262,6 +1288,9 @@ model Referral {
 
 /// Награда получателю: рефереру или приглашённому (role)
 model ReferralReward {
+  triggerPaymentId     String?              @db.Uuid
+  rejectionReason      String?
+  fraudSignals         Json                 @default("{}")
   id                   String               @id @default(uuid(7)) @db.Uuid
   referralId           String               @db.Uuid
   beneficiaryAccountId String               @db.Uuid
@@ -1283,6 +1312,7 @@ model ReferralReward {
   product            Product        @relation(fields: [productId], references: [id], onDelete: Restrict)
   planVersion        PlanVersion?   @relation(fields: [planVersionId], references: [id], onDelete: Restrict)
 
+  @@index([triggerPaymentId])
   @@index([status, availableAt])
   @@index([beneficiaryAccountId, createdAt])
   @@index([referralId])
@@ -1450,6 +1480,7 @@ model OutboxDelivery {
 /// Inbox вебхуков источников оплаты (§11.5). payload содержит PII:
 /// обнуляется воркером через срок хранения (payloadPurgedAt).
 model BillingWebhookEvent {
+  accountId       String?       @db.Uuid
   id              String        @id @default(uuid(7)) @db.Uuid
   source          PaymentSource
   externalEventId String
@@ -1463,20 +1494,22 @@ model BillingWebhookEvent {
   receivedAt      DateTime      @default(now()) @db.Timestamptz(3)
 
   @@unique([source, externalEventId])
+  @@index([accountId])
   @@index([status, receivedAt])
 }
 
 model EntitlementOverride {
-  id        String    @id @default(uuid(7)) @db.Uuid
-  accountId String    @db.Uuid
-  productId String    @db.Uuid
-  key       String
-  value     Json
-  reason    String
-  createdBy String    @db.Uuid // Identity сотрудника
-  expiresAt DateTime? @db.Timestamptz(3)
-  revokedAt DateTime? @db.Timestamptz(3)
-  createdAt DateTime  @default(now()) @db.Timestamptz(3)
+  targetKind String    @default("entitlement")
+  id         String    @id @default(uuid(7)) @db.Uuid
+  accountId  String    @db.Uuid
+  productId  String    @db.Uuid
+  key        String
+  value      Json
+  reason     String
+  createdBy  String    @db.Uuid // Identity сотрудника
+  expiresAt  DateTime? @db.Timestamptz(3)
+  revokedAt  DateTime? @db.Timestamptz(3)
+  createdAt  DateTime  @default(now()) @db.Timestamptz(3)
 
   account BillingAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
   product Product        @relation(fields: [productId], references: [id], onDelete: Restrict)
@@ -1531,6 +1564,7 @@ model AdminAuditLog {
 /// accountId — чтобы стереть письма аккаунта при удалении (§20);
 /// отправленные письма чистятся через срок хранения.
 model MailOutbox {
+  locale        String       @default("en-US")
   id            String       @id @default(uuid(7)) @db.Uuid
   accountId     String?      @db.Uuid // мягкая ссылка
   to            String
@@ -1546,4 +1580,17 @@ model MailOutbox {
 
   @@index([status, nextAttemptAt])
   @@index([accountId])
+}
+
+model AdminTask {
+  id         String    @id @default(uuid(7)) @db.Uuid
+  kind       String
+  dedupeKey  String    @unique
+  accountId  String?   @db.Uuid
+  status     String    @default("open")
+  details    Json      @default("{}")
+  createdAt  DateTime  @default(now()) @db.Timestamptz(3)
+  resolvedAt DateTime? @db.Timestamptz(3)
+
+  @@index([status, createdAt])
 }
