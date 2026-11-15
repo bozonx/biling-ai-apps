@@ -10,3 +10,6 @@ export type {
   EntitlementDefinition,
   EntitlementValue,
 } from "./entitlements.js";
+
+export { accrualBoundary } from "./accrual.js";
+export { applyCreditGrant } from "./billing.js";

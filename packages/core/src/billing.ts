@@ -62,3 +62,10 @@ export function allocateCredits(
   }
   throw new RangeError("Insufficient credits");
 }
+
+/** Apply incoming credits to outstanding debt before making them spendable. */
+export function applyCreditGrant(amount: bigint, debt: bigint) {
+  if (amount < 0n || debt < 0n) throw new RangeError("Invalid credit grant");
+  const repayment = debt < amount ? debt : amount;
+  return { repayment, available: amount - repayment };
+}

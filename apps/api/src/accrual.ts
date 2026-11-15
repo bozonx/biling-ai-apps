@@ -1,29 +1,7 @@
 import { ConflictException } from "@nestjs/common";
 import type { Prisma } from "./generated/prisma/client.js";
 
-function boundary(
-  anchor: Date,
-  interval: string,
-  count: number,
-  index: number,
-) {
-  const result = new Date(anchor);
-  const step = count * index;
-  if (interval === "day" || interval === "week") {
-    result.setUTCDate(
-      anchor.getUTCDate() + step * (interval === "week" ? 7 : 1),
-    );
-  } else {
-    result.setUTCDate(1);
-    result.setUTCMonth(
-      anchor.getUTCMonth() + step * (interval === "year" ? 12 : 1),
-    );
-    const last = new Date(result);
-    last.setUTCMonth(last.getUTCMonth() + 1, 0);
-    result.setUTCDate(Math.min(anchor.getUTCDate(), last.getUTCDate()));
-  }
-  return result;
-}
+import { accrualBoundary as boundary, applyCreditGrant } from "@billing/core";
 
 export async function accrueGrants(
   tx: Prisma.TransactionClient,
@@ -188,8 +166,7 @@ export async function accrueGrants(
     const wallet = await tx.creditWallet.findUniqueOrThrow({
       where: { accountId_productId: { accountId, productId } },
     });
-    const repayment = wallet.debtMilli < amount ? wallet.debtMilli : amount;
-    const available = amount - repayment;
+    const { repayment, available } = applyCreditGrant(amount, wallet.debtMilli);
     if (available > 9223372036854775807n - wallet.balanceMilli)
       throw new ConflictException({ code: "AMOUNT_OUT_OF_RANGE" });
     const operation = await tx.creditOperation.create({
