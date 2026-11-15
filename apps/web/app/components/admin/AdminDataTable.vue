@@ -87,7 +87,47 @@ const sectionTitle = computed(() => {
               class="max-w-xs break-words px-4 py-2.5 font-mono text-xs"
             >
               <slot :name="`cell-${col}`" :row="row">
-                {{ formatAdminCell(row, col) }}
+                <template v-if="col === 'isActive'">
+                  <UBadge
+                    :color="(row as any)[col] ? 'success' : 'neutral'"
+                    variant="subtle"
+                    size="xs"
+                  >
+                    {{ (row as any)[col] ? "active" : "inactive" }}
+                  </UBadge>
+                </template>
+                <template v-else-if="col === 'status'">
+                  <UBadge
+                    :color="
+                      (row as any)[col] === 'active' ||
+                      (row as any)[col] === 'published'
+                        ? 'success'
+                        : (row as any)[col] === 'revoked'
+                          ? 'error'
+                          : 'neutral'
+                    "
+                    variant="subtle"
+                    size="xs"
+                  >
+                    {{ (row as any)[col] }}
+                  </UBadge>
+                </template>
+                <template
+                  v-else-if="
+                    [
+                      'effectiveFrom',
+                      'effectiveTo',
+                      'publishedAt',
+                      'revokedAt',
+                      'createdAt',
+                    ].includes(col) && (row as any)[col]
+                  "
+                >
+                  <AppDateTime :value="String((row as any)[col])" />
+                </template>
+                <template v-else>
+                  {{ formatAdminCell(row, col) }}
+                </template>
               </slot>
             </td>
           </tr>

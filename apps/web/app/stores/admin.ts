@@ -130,7 +130,7 @@ export const useAdminStore = defineStore("admin", () => {
   async function executeAction(
     actionName: string,
     fieldNames: string[],
-    fieldValues: Record<string, string>,
+    fieldValues: Record<string, unknown>,
   ): Promise<boolean> {
     busy.value = true;
     error.value = "";
@@ -138,14 +138,21 @@ export const useAdminStore = defineStore("admin", () => {
     try {
       const body: Record<string, unknown> = {};
       for (const field of fieldNames) {
-        const val = fieldValues[field] ?? "";
+        const val = fieldValues[field];
+        if (val === undefined || val === null || val === "") {
+          continue;
+        }
         body[field] = ["version", "creditGrantIntervalCount"].includes(field)
           ? Number(val)
           : ["scopes", "productScope"].includes(field)
-            ? val
-                .split(",")
-                .map((v) => v.trim())
-                .filter(Boolean)
+            ? Array.isArray(val)
+              ? val
+              : typeof val === "string"
+                ? val
+                    .split(",")
+                    .map((v) => v.trim())
+                    .filter(Boolean)
+                : val
             : [
                   "creditGrants",
                   "entitlements",
@@ -153,8 +160,12 @@ export const useAdminStore = defineStore("admin", () => {
                   "limits",
                   "tiers",
                 ].includes(field)
-              ? JSON.parse(val)
-              : val;
+              ? typeof val === "object"
+                ? val
+                : JSON.parse(String(val))
+              : typeof val === "number"
+                ? String(val)
+                : val;
       }
       if (actionName !== "credits") body.action = actionName;
       const result = await request(
