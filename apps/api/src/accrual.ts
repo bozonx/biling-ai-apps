@@ -142,9 +142,9 @@ export async function accrueGrants(
     const wallet = await tx.creditWallet.findUniqueOrThrow({
       where: { accountId_productId: { accountId, productId } },
     });
-    if (wallet.debtMilli > 0n)
-      throw new ConflictException({ code: "DEBT_REPAYMENT_REQUIRED" });
-    if (amount > 9223372036854775807n - wallet.balanceMilli)
+    const repayment = wallet.debtMilli < amount ? wallet.debtMilli : amount;
+    const available = amount - repayment;
+    if (available > 9223372036854775807n - wallet.balanceMilli)
       throw new ConflictException({ code: "AMOUNT_OUT_OF_RANGE" });
     const operation = await tx.creditOperation.create({
       data: {
@@ -153,8 +153,8 @@ export async function accrueGrants(
         kind: "accrual",
         operationKey,
         walletSeq: wallet.lastOperationSeq + 1n,
-        balanceAfterMilli: wallet.balanceMilli + amount,
-        debtAfterMilli: wallet.debtMilli,
+        balanceAfterMilli: wallet.balanceMilli + available,
+        debtAfterMilli: wallet.debtMilli - repayment,
       },
     });
     const bucket = await tx.creditBucket.create({
@@ -163,7 +163,7 @@ export async function accrueGrants(
         productId,
         kind: "plan",
         grantedMilli: amount,
-        remainingMilli: amount,
+        remainingMilli: available,
         expiresAt: end,
         creditRateVersionId: rate.id,
         sourceType: "plan_grant",
@@ -182,10 +182,32 @@ export async function accrueGrants(
         reason: "accrual",
       },
     });
+    if (repayment > 0n) {
+      await tx.creditLedgerEntry.createMany({
+        data: [
+          {
+            accountId,
+            productId,
+            operationId: operation.id,
+            bucketId: bucket.id,
+            amountMilli: -repayment,
+            reason: "debt_repayment",
+          },
+          {
+            accountId,
+            productId,
+            operationId: operation.id,
+            amountMilli: -repayment,
+            reason: "debt",
+          },
+        ],
+      });
+    }
     await tx.creditWallet.update({
       where: { accountId_productId: { accountId, productId } },
       data: {
-        balanceMilli: { increment: amount },
+        balanceMilli: { increment: available },
+        debtMilli: { decrement: repayment },
         lastOperationSeq: { increment: 1 },
         version: { increment: 1 },
       },

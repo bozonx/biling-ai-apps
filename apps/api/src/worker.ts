@@ -1,5 +1,7 @@
 import "reflect-metadata";
 import "dotenv/config";
+import { config } from "./config.js";
+import { startMaintenanceQueue } from "./maintenance-queue.js";
 import { NestFactory } from "@nestjs/core";
 import { Database } from "./database.js";
 import { WalletService } from "./wallet.js";
@@ -13,25 +15,17 @@ import {
 
 @Injectable()
 class HoldExpiryWorker implements OnApplicationBootstrap, OnModuleDestroy {
-  private timer?: ReturnType<typeof setInterval>;
-  private running?: Promise<void>;
+  private close?: () => Promise<void>;
   constructor(@Inject(WalletService) private readonly wallets: WalletService) {}
-  onApplicationBootstrap() {
-    this.tick();
-    this.timer = setInterval(() => this.tick(), 5000);
-  }
-  private tick() {
-    if (this.running) return;
-    this.running = this.wallets
-      .expireHolds()
-      .catch((error: unknown) => console.error(error))
-      .finally(() => {
-        this.running = undefined;
-      });
+  async onApplicationBootstrap() {
+    this.close = await startMaintenanceQueue(
+      { host: config.REDIS_HOST, port: config.REDIS_PORT },
+      () => this.wallets.expireHolds(),
+      (error) => console.error(error),
+    );
   }
   async onModuleDestroy() {
-    clearInterval(this.timer);
-    await this.running;
+    await this.close?.();
   }
 }
 @Module({ providers: [Database, WalletService, HoldExpiryWorker] })

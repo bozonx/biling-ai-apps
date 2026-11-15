@@ -3,7 +3,8 @@ import { RedisContainer } from "@testcontainers/redis";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../../apps/api/src/generated/prisma/client.js";
 import { execFileSync } from "node:child_process";
-import { Queue, Worker } from "bullmq";
+import { Queue } from "bullmq";
+import { startMaintenanceQueue } from "../../apps/api/src/maintenance-queue.js";
 test("migrations, Prisma round trip and Redis job processing", async () => {
   const postgres = await new PostgreSqlContainer("postgres:18-alpine").start();
   try {
@@ -85,18 +86,23 @@ test("migrations, Prisma round trip and Redis job processing", async () => {
         host: redis.getHost(),
         port: redis.getMappedPort(6379),
       };
-      const queue = new Queue("smoke", { connection });
-      const worker = new Worker("smoke", async (job) => job.data, {
-        connection,
+      const queue = new Queue("billing-maintenance", { connection });
+      let completed!: () => void;
+      let failed!: (error: Error) => void;
+      const processed = new Promise<void>((resolve, reject) => {
+        completed = resolve;
+        failed = reject;
       });
+      const close = await startMaintenanceQueue(
+        connection,
+        async () => completed(),
+        failed,
+      );
       try {
-        const completed = new Promise((resolve) =>
-          worker.once("completed", resolve),
-        );
-        await queue.add("ping", { ok: true });
-        await completed;
+        await processed;
+        expect(await queue.getJobSchedulersCount()).toBe(1);
       } finally {
-        await worker.close();
+        await close();
         await queue.close();
       }
     } finally {

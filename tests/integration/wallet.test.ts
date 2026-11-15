@@ -201,6 +201,32 @@ test("wallet transactions serialize reservations and preserve an append-only led
       (await db.creditLedgerEntry.aggregate({ _sum: { amountMilli: true } }))
         ._sum.amountMilli,
     ).toBe(0n);
+    const indebted = await db.creditWallet.update({
+      where: {
+        accountId_productId: { accountId: account.id, productId: product.id },
+      },
+      data: { debtMilli: 200n, lastOperationSeq: { increment: 1 } },
+    });
+    const debtOperation = await db.creditOperation.create({
+      data: {
+        accountId: account.id,
+        productId: product.id,
+        kind: "adjustment",
+        operationKey: "test-debt",
+        walletSeq: indebted.lastOperationSeq,
+        balanceAfterMilli: 0n,
+        debtAfterMilli: 200n,
+      },
+    });
+    await db.creditLedgerEntry.create({
+      data: {
+        accountId: account.id,
+        productId: product.id,
+        operationId: debtOperation.id,
+        reason: "debt",
+        amountMilli: 200n,
+      },
+    });
     await db.planVersion.create({
       data: {
         planId: plan.id,
@@ -214,14 +240,31 @@ test("wallet transactions serialize reservations and preserve an append-only led
       service.balance(account.id, product.id),
       service.balance(account.id, product.id),
     ]);
-    expect(balances.map((wallet) => wallet.balanceMilli)).toEqual([500n, 500n]);
+    expect(balances.map((wallet) => wallet.balanceMilli)).toEqual([300n, 300n]);
     expect(await db.creditOperation.count({ where: { kind: "accrual" } })).toBe(
       1,
     );
     const accrued = await db.creditBucket.findFirstOrThrow({
       where: { sourceType: "plan_grant" },
     });
-    expect(accrued.remainingMilli).toBe(500n);
+    expect(accrued.remainingMilli).toBe(300n);
+    expect(balances[0]!.debtMilli).toBe(0n);
+    expect(
+      (
+        await db.creditLedgerEntry.aggregate({
+          where: { reason: "debt" },
+          _sum: { amountMilli: true },
+        })
+      )._sum.amountMilli,
+    ).toBe(0n);
+    expect(
+      (
+        await db.creditLedgerEntry.aggregate({
+          where: { reason: { not: "debt" } },
+          _sum: { amountMilli: true },
+        })
+      )._sum.amountMilli,
+    ).toBe(300n);
     expect(accrued.expiresAt!.getTime()).toBeGreaterThan(Date.now());
     expect(balances[0]!.nextAccrualAt).toEqual(accrued.expiresAt);
     expect(balances[0]!.nextExpiryAt).toEqual(accrued.expiresAt);
