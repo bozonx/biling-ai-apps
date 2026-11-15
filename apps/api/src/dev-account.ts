@@ -1,3 +1,4 @@
+import { json } from "./json.js";
 import { Controller, Get, Inject, NotFoundException } from "@nestjs/common";
 import { z } from "zod";
 import { walletSchema, operationsSchema } from "@billing/contracts";
@@ -17,13 +18,6 @@ export class DevAccountController {
       productId: z.uuid().parse(process.env.DEV_PRODUCT_ID),
     };
   }
-  private json(value: unknown): unknown {
-    return JSON.parse(
-      JSON.stringify(value, (_key, item: unknown) =>
-        typeof item === "bigint" ? item.toString() : item,
-      ),
-    );
-  }
   @Get()
   account() {
     return this.context();
@@ -32,14 +26,14 @@ export class DevAccountController {
   async wallet() {
     const { accountId, productId } = this.context();
     return walletSchema.parse(
-      this.json(await this.wallets.balance(accountId, productId)),
+      json(await this.wallets.balance(accountId, productId)),
     );
   }
   @Get("operations")
   async operations() {
     const { accountId, productId } = this.context();
     return operationsSchema.parse(
-      this.json(await this.wallets.history(accountId, productId)),
+      json(await this.wallets.history(accountId, productId)),
     );
   }
 }

@@ -1,5 +1,7 @@
 import {
   ConflictException,
+  HttpException,
+  Logger,
   Inject,
   Injectable,
   NotFoundException,
@@ -10,7 +12,10 @@ import { allocateCredits } from "@billing/core";
 
 type Transaction = Prisma.TransactionClient;
 const fail = (code: string): never => {
-  throw new ConflictException({ code });
+  throw new HttpException(
+    { code },
+    code === "INSUFFICIENT_CREDITS" ? 402 : 409,
+  );
 };
 
 @Injectable()
@@ -59,7 +64,7 @@ export class WalletService {
       try {
         await this.close(hold.productId, hold.id, "release");
       } catch (error) {
-        if (!(error instanceof ConflictException)) throw error;
+        Logger.error(error, undefined, "HoldExpiry");
       }
     }
   }
@@ -80,7 +85,14 @@ export class WalletService {
     const wallet = await this.db.creditWallet.findUnique({
       where: { accountId_productId: { accountId, productId } },
     });
-    if (!wallet) throw new NotFoundException({ code: "WALLET_NOT_FOUND" });
+    if (!wallet)
+      return {
+        accountId,
+        productId,
+        balanceMilli: 0n,
+        heldMilli: 0n,
+        debtMilli: 0n,
+      };
     return wallet;
   }
 

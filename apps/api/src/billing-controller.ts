@@ -1,3 +1,4 @@
+import { json } from "./json.js";
 import {
   Body,
   Controller,
@@ -36,13 +37,6 @@ function parse<T>(schema: z.ZodType<T>, value: unknown): T {
     throw new BadRequestException({ code: "INVALID_REQUEST" });
   return result.data;
 }
-function json(value: unknown): unknown {
-  return JSON.parse(
-    JSON.stringify(value, (_key, item: unknown) =>
-      typeof item === "bigint" ? item.toString() : item,
-    ),
-  );
-}
 @Controller("s2s")
 export class BillingController {
   constructor(
@@ -68,6 +62,10 @@ export class BillingController {
       throw new UnauthorizedException({ code: "INVALID_API_KEY" });
     if (!key.scopes.includes(scope))
       throw new ForbiddenException({ code: "INSUFFICIENT_SCOPE" });
+    await this.db.productApiKey.update({
+      where: { id: key.id },
+      data: { lastUsedAt: new Date() },
+    });
     return key.productId;
   }
   private key(value: unknown) {

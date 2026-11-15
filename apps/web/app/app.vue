@@ -1,8 +1,8 @@
 <template>
   <UApp
     ><main>
-      <h1>Billing AI</h1>
-      <p>Портал биллинга — инфраструктура готова к разработке.</p>
+      <h1>{{ $t("title") }}</h1>
+      <p>{{ $t("intro") }}</p>
     </main></UApp
   >
 </template>
