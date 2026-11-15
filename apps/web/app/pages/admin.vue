@@ -57,6 +57,8 @@ const columns: Record<string, string[]> = {
     "model",
     "creditsChargedMilli",
     "costNanos",
+    "valueNanos",
+    "marginNanos",
     "requests",
   ],
   routePrices: [
@@ -136,6 +138,8 @@ async function load() {
         model: string | null;
         _sum: { creditsChargedMilli: string | null; costNanos: string | null };
         _count: number;
+        valueNanos: string | null;
+        marginNanos: string | null;
       }[]
     >("/api/v1/admin/margin", {
       headers: { Authorization: `Bearer ${token.value}` },

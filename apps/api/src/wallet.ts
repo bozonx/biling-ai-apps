@@ -33,6 +33,7 @@ export class WalletService {
       where: { id: accountId },
     });
     if (!account) throw new NotFoundException({ code: "ACCOUNT_NOT_FOUND" });
+    await tx.$queryRaw`SELECT "id" FROM "BillingAccount" WHERE "id" = ${accountId}::uuid FOR UPDATE`;
     await tx.creditWallet.upsert({
       where: { accountId_productId: { accountId, productId } },
       create: { accountId, productId },
@@ -133,6 +134,20 @@ export class WalletService {
         (await effectiveEntitlements(tx, accountId, productId)).values,
       { isolationLevel: "RepeatableRead" },
     );
+  }
+
+  async maintainWallets() {
+    const now = new Date();
+    const wallets = await this.db.creditWallet.findMany({
+      where: {
+        OR: [{ nextAccrualAt: { lte: now } }, { nextExpiryAt: { lte: now } }],
+      },
+      orderBy: [{ accountId: "asc" }, { productId: "asc" }],
+      take: 100,
+    });
+    for (const wallet of wallets) {
+      await this.balance(wallet.accountId, wallet.productId);
+    }
   }
 
   async expireHolds() {
@@ -619,7 +634,7 @@ export class WalletService {
               accountId: hold.accountId,
               productId,
               operationId: operation.id,
-              amountMilli: -debt,
+              amountMilli: debt,
               reason: "debt",
               usageEventId: usage.id,
               holdId,

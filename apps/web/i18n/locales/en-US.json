@@ -177,7 +177,9 @@
       "creditsChargedMilli": "Revenue, milli-credits",
       "costNanos": "Cost, nano-USD",
       "requests": "Requests",
-      "details": "Details"
+      "details": "Details",
+      "valueNanos": "Credit value, nano-USD",
+      "marginNanos": "Estimated margin, nano-USD"
     },
     "sections": {
       "products": "Products",

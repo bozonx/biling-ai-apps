@@ -180,14 +180,38 @@ export class AdminController {
   @Get("margin")
   async margin(@Headers("authorization") auth?: string) {
     await this.staff.authorize(auth);
+    const rows = await this.db.usageEvent.groupBy({
+      by: ["productId", "routeId", "provider", "model", "creditRateVersionId"],
+      _sum: { creditsChargedMilli: true, costNanos: true },
+      _count: true,
+    });
+    const rates = await this.db.creditRateVersion.findMany({
+      where: {
+        id: {
+          in: rows.flatMap((row) =>
+            row.creditRateVersionId ? [row.creditRateVersionId] : [],
+          ),
+        },
+      },
+    });
     return json(
-      await this.db.usageEvent.groupBy({
-        by: ["productId", "routeId", "provider", "model"],
-        _sum: { creditsChargedMilli: true, costNanos: true },
-        _count: true,
+      rows.map((row) => {
+        const rate = rates.find((rate) => rate.id === row.creditRateVersionId);
+        const valueNanos = rate
+          ? (row._sum.creditsChargedMilli ?? 0n) * rate.creditValueMicros
+          : null;
+        return {
+          ...row,
+          valueNanos,
+          marginNanos:
+            valueNanos === null
+              ? null
+              : valueNanos - (row._sum.costNanos ?? 0n),
+        };
       }),
     );
   }
+
   @Get("catalog")
   async catalog(@Headers("authorization") auth?: string) {
     await this.staff.authorize(auth);

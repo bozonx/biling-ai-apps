@@ -51,6 +51,9 @@ export class CommitOutbox {
             : "delivery_delayed",
         )
         .catch(() => undefined);
+    await this.pool.query(
+      `UPDATE gateway.commit_outbox SET state='unknown',response=COALESCE(response, '{"error":{"code":"PROVIDER_FAILED"}}'::jsonb) WHERE state='running' AND created_at < now()-interval '5 minutes'`,
+    );
     const connection = await this.pool.connect();
     try {
       await connection.query("BEGIN");

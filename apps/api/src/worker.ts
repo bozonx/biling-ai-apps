@@ -21,7 +21,10 @@ class HoldExpiryWorker implements OnApplicationBootstrap, OnModuleDestroy {
   async onApplicationBootstrap() {
     this.close = await startMaintenanceQueue(
       { host: config.REDIS_HOST, port: config.REDIS_PORT },
-      () => this.wallets.expireHolds(),
+      async () => {
+        await this.wallets.expireHolds();
+        await this.wallets.maintainWallets();
+      },
       (error) =>
         logger.error({ errorType: error.name }, "Maintenance job failed"),
     );

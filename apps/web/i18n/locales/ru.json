@@ -177,7 +177,9 @@
       "creditsChargedMilli": "Выручка, милли-кредиты",
       "costNanos": "Себестоимость, нано-USD",
       "requests": "Запросы",
-      "details": "Подробности"
+      "details": "Подробности",
+      "valueNanos": "Стоимость кредитов, нано-USD",
+      "marginNanos": "Расчётная маржа, нано-USD"
     },
     "sections": {
       "products": "Продукты",

@@ -333,7 +333,12 @@ test("gateway reserves, records provider usage durably and retries commit across
       await db.creditLedgerEntry.findFirst({
         where: { holdId: small.hold.id, reason: "debt" },
       }),
-    ).toMatchObject({ amountMilli: -594n });
+    ).toMatchObject({ amountMilli: 594n });
+    const debtLedger = await db.creditLedgerEntry.aggregate({
+      where: { accountId: account.id, productId: product.id, reason: "debt" },
+      _sum: { amountMilli: true },
+    });
+    expect(debtLedger._sum.amountMilli).toBe(594n);
   } finally {
     nock.cleanAll();
     if (nock.isActive()) nock.restore();
