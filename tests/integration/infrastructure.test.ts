@@ -20,6 +20,62 @@ test("migrations, Prisma round trip and Redis job processing", async () => {
       expect(
         await db.product.findUnique({ where: { id: product.id } }),
       ).toMatchObject({ code: "smoke" });
+      await expect(
+        db.product.update({
+          where: { id: product.id },
+          data: { code: "changed" },
+        }),
+      ).rejects.toThrow();
+      const plan = await db.plan.create({
+        data: {
+          code: "test",
+          name: "Test",
+          productScope: ["smoke"],
+          kind: "base",
+        },
+      });
+      const publishedAt = new Date();
+      const version = await db.planVersion.create({
+        data: {
+          planId: plan.id,
+          version: 1,
+          publishedAt,
+          effectiveFrom: publishedAt,
+        },
+      });
+      await db.planVersion.update({
+        where: { id: version.id },
+        data: {
+          effectiveTo: new Date(publishedAt.getTime() + 86400000),
+          revokedAt: publishedAt,
+        },
+      });
+      await expect(
+        db.planVersion.update({
+          where: { id: version.id },
+          data: { creditGrants: { smoke: 10 } },
+        }),
+      ).rejects.toThrow();
+      await expect(
+        db.planVersion.create({
+          data: {
+            planId: plan.id,
+            version: 2,
+            publishedAt,
+            effectiveFrom: new Date(0),
+          },
+        }),
+      ).rejects.toThrow();
+      const identity = await db.identity.create({ data: {} });
+      await db.identityBinding.createMany({
+        data: [
+          { identityId: identity.id, issuer: "old", subject: "user" },
+          { identityId: identity.id, issuer: "new", subject: "user" },
+        ],
+      });
+      expect(
+        await db.identityBinding.count({ where: { identityId: identity.id } }),
+      ).toBe(2);
     } finally {
       await db.$disconnect();
     }

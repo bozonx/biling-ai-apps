@@ -204,6 +204,9 @@ enum PurchaseStatus {
   pending
   paid
   refunded
+  failed
+  partially_refunded
+  chargeback
 }
 
 enum PaymentKind {
@@ -263,7 +266,6 @@ enum ReferralStatus {
 enum ReferralRewardKind {
   credits
   plan_grant
-  commission // выплаты — позже (§13.4)
 }
 
 enum ReferralRewardRole {
@@ -417,8 +419,6 @@ model ProductEntitlementKey {
 /// RAW: CHECK ((deletedAt IS NULL) = (issuer IS NOT NULL AND subject IS NOT NULL))
 model Identity {
   id        String    @id @default(uuid(7)) @db.Uuid // = actorId
-  issuer    String? // URL IdP или 'product:<productId>'
-  subject   String?
   createdAt DateTime  @default(now()) @db.Timestamptz(3)
   deletedAt DateTime? @db.Timestamptz(3)
 
@@ -427,7 +427,7 @@ model Identity {
   staffRoles      StaffRole[]
   auditLogs       AdminAuditLog[]
 
-  @@unique([issuer, subject])
+  bindings IdentityBinding[]
 }
 
 /// personalOwnerId = ownerIdentityId у personal, NULL у team — обычная
@@ -543,32 +543,36 @@ model Plan {
   createdAt    DateTime   @default(now()) @db.Timestamptz(3)
   updatedAt    DateTime   @updatedAt @db.Timestamptz(3)
 
+  defaultGrants      PlanGrant[]
   versions           PlanVersion[]
   requiredByVersions PlanVersion[] @relation("RequiresBasePlan")
 }
 
 /// Неизменяема после publishedAt (инвариант 7)
 model PlanVersion {
-  revokedAt          DateTime? @db.Timestamptz(3)
-  id                 String    @id @default(uuid(7)) @db.Uuid
-  planId             String    @db.Uuid
-  version            Int
+  trialCreditGrants        Json            @default("{}")
+  creditGrantInterval      BillingInterval @default(month)
+  creditGrantIntervalCount Int             @default(1)
+  revokedAt                DateTime?       @db.Timestamptz(3)
+  id                       String          @id @default(uuid(7)) @db.Uuid
+  planId                   String          @db.Uuid
+  version                  Int
   /// { tyco: { 'ai.enabled': true, ... } }
-  entitlements       Json      @default("{}")
+  entitlements             Json            @default("{}")
   /// { fastcat: { 'storage.bytes': 10737418240 } }
-  quotas             Json      @default("{}")
+  quotas                   Json            @default("{}")
   /// { tyco: 500000 } — милли-кредиты за месяц
-  creditGrants       Json      @default("{}")
+  creditGrants             Json            @default("{}")
   /// { tyco: LimitRule[] } (§8.8)
-  limits             Json      @default("{}")
+  limits                   Json            @default("{}")
   /// прочие правила версии (addon: «любой платный базовый», fallbackCredits)
-  rules              Json      @default("{}")
-  requiresBasePlanId String?   @db.Uuid
-  effectiveFrom      DateTime  @db.Timestamptz(3)
+  rules                    Json            @default("{}")
+  requiresBasePlanId       String?         @db.Uuid
+  effectiveFrom            DateTime        @db.Timestamptz(3)
   /// конец продаж версии (не конец действия у подписчиков)
-  effectiveTo        DateTime? @db.Timestamptz(3)
-  publishedAt        DateTime? @db.Timestamptz(3)
-  createdAt          DateTime  @default(now()) @db.Timestamptz(3)
+  effectiveTo              DateTime?       @db.Timestamptz(3)
+  publishedAt              DateTime?       @db.Timestamptz(3)
+  createdAt                DateTime        @default(now()) @db.Timestamptz(3)
 
   plan             Plan  @relation(fields: [planId], references: [id], onDelete: Restrict)
   requiresBasePlan Plan? @relation("RequiresBasePlan", fields: [requiresBasePlanId], references: [id], onDelete: Restrict)
@@ -801,7 +805,7 @@ model CreditBucket {
   account           BillingAccount      @relation(fields: [accountId], references: [id], onDelete: Restrict)
   product           Product             @relation(fields: [productId], references: [id], onDelete: Restrict)
   creditRateVersion CreditRateVersion   @relation(fields: [creditRateVersionId], references: [id], onDelete: Restrict)
-  operation         CreditOperation     @relation(fields: [operationId], references: [id], onDelete: Restrict)
+  operation         CreditOperation     @relation(fields: [operationId, accountId, productId], references: [id, accountId, productId], onDelete: Restrict)
   ledgerEntries     CreditLedgerEntry[]
   purchase          Purchase?
 
@@ -830,10 +834,10 @@ model CreditLedgerEntry {
   meta         Json         @default("{}")
   createdAt    DateTime     @default(now()) @db.Timestamptz(3)
 
-  operation CreditOperation @relation(fields: [operationId], references: [id], onDelete: Restrict)
+  operation CreditOperation @relation(fields: [operationId, accountId, productId], references: [id, accountId, productId], onDelete: Restrict)
   account   BillingAccount  @relation(fields: [accountId], references: [id], onDelete: Restrict)
   product   Product         @relation(fields: [productId], references: [id], onDelete: Restrict)
-  bucket    CreditBucket?   @relation(fields: [bucketId], references: [id], onDelete: Restrict)
+  bucket    CreditBucket?   @relation(fields: [bucketId, accountId, productId], references: [id, accountId, productId], onDelete: Restrict)
   payment   Payment?        @relation(fields: [paymentId], references: [id], onDelete: Restrict)
 
   @@index([usageEventId])
@@ -1080,6 +1084,7 @@ model SubscriptionEvent {
 
 /// creditsMilli/validityDays — снимок пакета на момент покупки
 model Purchase {
+  checkoutSessionId String?        @unique @db.Uuid
   id                String         @id @default(uuid(7)) @db.Uuid
   accountId         String         @db.Uuid
   productId         String         @db.Uuid
@@ -1087,7 +1092,7 @@ model Purchase {
   creditsMilli      BigInt
   validityDays      Int
   source            PaymentSource
-  externalId        String
+  externalId        String?
   status            PurchaseStatus @default(pending)
   bucketId          String?        @unique @db.Uuid
   createdAt         DateTime       @default(now()) @db.Timestamptz(3)
@@ -1096,7 +1101,7 @@ model Purchase {
   account         BillingAccount  @relation(fields: [accountId], references: [id], onDelete: Restrict)
   product         Product         @relation(fields: [productId], references: [id], onDelete: Restrict)
   creditPackOffer CreditPackOffer @relation(fields: [creditPackOfferId], references: [id], onDelete: Restrict)
-  bucket          CreditBucket?   @relation(fields: [bucketId], references: [id], onDelete: Restrict)
+  bucket          CreditBucket?   @relation(fields: [bucketId, accountId, productId], references: [id, accountId, productId], onDelete: Restrict)
   payments        Payment[]
 
   @@unique([source, externalId])
@@ -1171,10 +1176,12 @@ model PaymentRefund {
 /// Тариф без оплаты: free, акция, реферал, бета (§6.2, §13.3).
 /// idempotencyKey: 'default:<accountId>', 'referral_reward:<id>' …
 model PlanGrant {
+  planId         String?         @db.Uuid
+  plan           Plan?           @relation(fields: [planId], references: [id], onDelete: Restrict)
   id             String          @id @default(uuid(7)) @db.Uuid
   accountId      String          @db.Uuid
   productId      String          @db.Uuid
-  planVersionId  String          @db.Uuid
+  planVersionId  String?         @db.Uuid
   source         PlanGrantSource
   sourceId       String?
   idempotencyKey String
@@ -1186,7 +1193,7 @@ model PlanGrant {
 
   account     BillingAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
   product     Product        @relation(fields: [productId], references: [id], onDelete: Restrict)
-  planVersion PlanVersion    @relation(fields: [planVersionId], references: [id], onDelete: Restrict)
+  planVersion PlanVersion?   @relation(fields: [planVersionId], references: [id], onDelete: Restrict)
 
   @@unique([productId, idempotencyKey])
   @@index([accountId, productId, status])
@@ -1593,4 +1600,50 @@ model AdminTask {
   resolvedAt DateTime? @db.Timestamptz(3)
 
   @@index([status, createdAt])
+}
+
+model IdentityBinding {
+  id         String    @id @default(uuid(7)) @db.Uuid
+  identityId String    @db.Uuid
+  issuer     String?
+  subject    String?
+  createdAt  DateTime  @default(now()) @db.Timestamptz(3)
+  deletedAt  DateTime? @db.Timestamptz(3)
+  identity   Identity  @relation(fields: [identityId], references: [id], onDelete: Restrict)
+
+  @@unique([issuer, subject])
+  @@index([identityId])
+}
+
+model CheckoutSession {
+  id                String        @id @default(uuid(7)) @db.Uuid
+  accountId         String        @db.Uuid
+  source            PaymentSource
+  externalId        String?
+  idempotencyKey    String        @unique
+  offerId           String?       @db.Uuid
+  creditPackOfferId String?       @db.Uuid
+  promotionId       String?       @db.Uuid
+  referralId        String?       @db.Uuid
+  returnUrl         String
+  status            String        @default("pending")
+  expiresAt         DateTime      @db.Timestamptz(3)
+  createdAt         DateTime      @default(now()) @db.Timestamptz(3)
+
+  @@unique([source, externalId])
+  @@index([accountId, createdAt])
+  @@index([status, expiresAt])
+}
+
+model LimitUsageWindow {
+  scopeKey    String
+  windowStart DateTime   @db.Timestamptz(3)
+  windowEnd   DateTime   @db.Timestamptz(3)
+  meter       LimitMeter
+  consumed    BigInt     @default(0)
+  reserved    BigInt     @default(0)
+  updatedAt   DateTime   @updatedAt @db.Timestamptz(3)
+
+  @@id([scopeKey, windowStart, meter])
+  @@index([windowEnd])
 }
