@@ -101,7 +101,7 @@ export class BillingClient {
       meters: Record<string, string>;
       providerCostNanos?: string;
       rawUsage?: Record<string, unknown>;
-      status?: "ok" | "partial";
+      status?: "ok" | "partial" | "error";
     },
   ) {
     return holdSchema.parse(

@@ -228,7 +228,7 @@ test("gateway reserves, records provider usage durably and retries commit across
       await db.creditHold.findFirst({
         where: { idempotencyKey: "provider-rejected" },
       }),
-    ).toMatchObject({ status: "released" });
+    ).toMatchObject({ status: "committed" });
     const late = await wallets.reserveMetered(product.id, "late", {
       accountId: account.id,
       featureId: feature.id,
@@ -237,7 +237,7 @@ test("gateway reserves, records provider usage durably and retries commit across
     });
     await db.creditHold.update({
       where: { id: late.hold.id },
-      data: { expiresAt: new Date(0) },
+      data: { expiresAt: new Date(Date.now() - 1000) },
     });
     await wallets.expireHolds();
     await wallets.close(product.id, late.hold.id, "commit", undefined, {
@@ -276,6 +276,31 @@ test("gateway reserves, records provider usage durably and retries commit across
     expect(
       await db.usageEvent.findFirst({ where: { holdId: released.hold.id } }),
     ).toMatchObject({ isLate: true, status: "partial" });
+    const ancient = await wallets.reserveMetered(product.id, "outside-window", {
+      accountId: account.id,
+      featureId: feature.id,
+      routeId: route.id,
+      meters: { input_tokens: "1", output_tokens: "1" },
+    });
+    await db.creditHold.update({
+      where: { id: ancient.hold.id },
+      data: { expiresAt: new Date(0) },
+    });
+    const beforeAncient = await wallets.balance(account.id, product.id);
+    await wallets.close(product.id, ancient.hold.id, "commit", undefined, {
+      meters: { input_tokens: "2", output_tokens: "2" },
+      status: "ok",
+    });
+    expect(await wallets.balance(account.id, product.id)).toMatchObject({
+      balanceMilli: beforeAncient.balanceMilli,
+    });
+    expect(
+      await db.usageEvent.findFirst({ where: { holdId: ancient.hold.id } }),
+    ).toMatchObject({
+      costNanos: 6000n,
+      creditsChargedMilli: 0n,
+      isLate: true,
+    });
     const zero = await wallets.reserveMetered(product.id, "zero", {
       accountId: account.id,
       featureId: feature.id,
@@ -331,7 +356,7 @@ test("gateway reserves, records provider usage durably and retries commit across
     });
     await db.creditHold.update({
       where: { id: small.hold.id },
-      data: { expiresAt: new Date(0) },
+      data: { expiresAt: new Date(Date.now() - 1000) },
     });
     await wallets.expireHolds();
     await wallets.close(product.id, small.hold.id, "commit", undefined, {

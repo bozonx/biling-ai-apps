@@ -141,7 +141,17 @@ export class GatewayService implements OnModuleInit, OnModuleDestroy {
       if (!captured && error instanceof ProviderRejected)
         await this.outbox.enqueue(
           key,
-          { holdId: hold.id, action: "release" },
+          {
+            holdId: hold.id,
+            action: "commit",
+            usage: {
+              meters: {},
+              status: "error",
+              ...(route.provider === "openrouter"
+                ? { providerCostNanos: "0" }
+                : {}),
+            },
+          },
           { error: { code: "PROVIDER_FAILED" } },
         );
       else if (!captured)

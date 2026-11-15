@@ -360,6 +360,7 @@ enum StaffRoleKind {
 // ============================================================================
 
 model Product {
+  lateCommitWindowSec Int @default(604800)
   display   Json          @default("{}")
   id        String        @id @default(uuid(7)) @db.Uuid
   /// неизменяем после создания

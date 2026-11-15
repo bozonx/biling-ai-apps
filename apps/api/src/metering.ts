@@ -31,7 +31,7 @@ export const meteredUsageSchema = z
     meters: metersSchema,
     providerCostNanos: meterAmount.optional(),
     rawUsage: z.record(z.string(), z.unknown()).optional(),
-    status: z.enum(["ok", "partial"]).default("ok"),
+    status: z.enum(["ok", "partial", "error"]).default("ok"),
   })
   .strict();
 export type MeteredUsage = z.infer<typeof meteredUsageSchema>;

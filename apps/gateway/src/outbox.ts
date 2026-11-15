@@ -39,14 +39,14 @@ export class CommitOutbox {
   }
   async flush() {
     const stalled = await this.pool.query(
-      `SELECT hold_id,state FROM gateway.commit_outbox WHERE (state='running' AND created_at < now()-interval '5 minutes') OR (state='pending' AND attempts>=10) LIMIT 20`,
+      `SELECT hold_id,state FROM gateway.commit_outbox WHERE (state IN ('running','unknown') AND created_at < now()-interval '5 minutes') OR (state='pending' AND attempts>=10) LIMIT 20`,
     );
     for (const row of stalled.rows as { hold_id: string; state: string }[])
       await this.billing
         .reportDiscrepancy(
           row.hold_id,
           this.apiKey,
-          row.state === "running"
+          row.state !== "pending"
             ? "provider_outcome_unknown"
             : "delivery_delayed",
         )

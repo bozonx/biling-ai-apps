@@ -502,7 +502,19 @@ export class WalletService {
       if (metered && !priced) fail("INVALID_METERED_HOLD");
       if (priced)
         actual = { creditsMilli: priced.credits, costNanos: priced.cost };
-      const charged = actual?.creditsMilli ?? hold.amountMilli;
+      const product = await tx.product.findUniqueOrThrow({
+        where: { id: productId },
+      });
+      const outsideWindow =
+        action === "commit" &&
+        metered &&
+        Date.now() >
+          hold.expiresAt.getTime() + product.lateCommitWindowSec * 1000;
+      const charged =
+        outsideWindow ||
+        (metered?.status === "error" && actual?.costNanos === 0n)
+          ? 0n
+          : (actual?.creditsMilli ?? hold.amountMilli);
       if (
         actual &&
         (action !== "commit" ||
