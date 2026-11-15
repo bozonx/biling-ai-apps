@@ -1,20 +1,29 @@
 # Billing AI Apps
 
-Инфраструктурный каркас по [дизайну](dev_docs/billing-service-design.md). Бизнес-логика биллинга, авторизация, платежи и выполнение AI-запросов пока не реализованы. `/health` проверяет доступность процесса.
+Инфраструктурный каркас по [дизайну](dev_docs/billing-service-design.md). Реализованы базовое ядро биллинга и временный локальный кабинет. Авторизация через IdP, платежи и выполнение AI-запросов пока не подключены. `/health` проверяет доступность процесса.
 
 Node.js 24+, pnpm 10, Docker с Compose. Версии зависимостей закреплены в catalog и lockfile; Prisma используется стабильной ветки 7.
 
 ```sh
 pnpm install
 cp .env.example .env
-docker compose up -d --wait
+cp apps/web/.env.example apps/web/.env
+docker compose up -d --wait postgres redis
 pnpm db:generate
 pnpm db:deploy
 pnpm db:seed
+pnpm exec turbo run build --filter="./packages/*"
 pnpm dev
 ```
 
-Web: localhost:3012, API: localhost:3010/health, gateway: localhost:3011/health. PostgreSQL: localhost:5433, Redis: localhost:6380. Внутри Docker используются стандартные порты 5432 и 6379. Dev-порт UI 3012 задан в `apps/web/package.json`. Worker: `pnpm --filter @billing/api worker`.
+Web: localhost:3012, API: localhost:3010/health, gateway: localhost:3011/health. PostgreSQL: localhost:5433, Redis: localhost:6380. Внутри Docker используются стандартные порты 5432 и 6379. Dev-порт UI 3012 задан в `apps/web/package.json`. Команды выполняются из корня репозитория. `pnpm dev` запускает UI, API и gateway; API и gateway явно читают корневой `.env`, Nuxt — `apps/web/.env`. Worker запускается отдельно после сборки:
+
+```sh
+pnpm --filter @billing/api build
+pnpm --filter @billing/api exec node --env-file=../../.env dist/worker.js
+```
+
+Seed создаёт продукт `tyco` и версию курса, а вне production — dev-аккаунт с однократным начислением 1000 кредитов. После выполнения перенесите напечатанные `DEV_ACCOUNT_ID` и `DEV_PRODUCT_ID` в корневой `.env`. С настройками по умолчанию страница входа открывается, но вход отключён. Для работы кабинета включите dev-режим по инструкции ниже и `NUXT_PUBLIC_DEV_LOGIN_ENABLED=true` в `apps/web/.env`. После изменения env перезапустите соответствующие процессы. Существующие `.env` сверяйте с примерами вручную, без перезаписи локальных значений.
 
 ```sh
 pnpm check
@@ -26,7 +35,7 @@ pnpm test:e2e
 pnpm build
 ```
 
-Integration smoke запускает изолированные PostgreSQL/Redis через Testcontainers, применяет миграции, проверяет Prisma и обработку BullMQ. Нужен работающий Docker. E2E сам запускает web/API. Unit-тесты не требуют инфраструктуры. Не используйте production DATABASE_URL локально.
+Integration smoke запускает изолированные PostgreSQL/Redis через Testcontainers, применяет миграции, проверяет Prisma и обработку BullMQ. Нужен работающий Docker. E2E сам запускает UI на порту 3012 и подменяет ответы API; API и Docker для этих тестов не нужны. Unit-тесты не требуют инфраструктуры. Не используйте production DATABASE_URL локально.
 
 `apps/api` — NestJS/Fastify и отдельный worker; `apps/gateway` — отдельный HTTP-процесс; `apps/web` — Nuxt 4/UI/Pinia; `packages/core` — чистый домен, `contracts` — Zod, `client` — HTTP SDK. Prisma и миграции находятся в корне. Для новой миграции: `pnpm db:migrate --name description`.
 
@@ -72,8 +81,7 @@ Commit атомарно создаёт UsageEvent, его ключ идемпо�
 Повторный commit не создаёт второй usage. История доступна через
 `GET /s2s/usage/:accountId` (scope `usage:read`, курсор `before` — id события,
 до 50 событий). В этом срезе себестоимость неизвестна (`costSource=unknown`),
-списывается полный резерв. Worker (`pnpm --filter @billing/api worker` после
-сборки) освобождает резервы каждые 5 секунд, устанавливая статус `expired`.
+списывается полный резерв. Worker (отдельный запуск после сборки, см. выше) освобождает резервы каждые 5 секунд, устанавливая статус `expired`.
 
 Ограничения среза: нет частичных и поздних списаний, получения фактической
 себестоимости и лимитов частоты. Commit после срока отклоняется. Ручные партии
@@ -93,7 +101,7 @@ Commit атомарно создаёт UsageEvent, его ключ идемпо�
 от настройки. Используйте только локально: все посетители получают один аккаунт.
 Endpoint `GET /api/v1/me` возвращает контекст, `/api/v1/me/wallet` — баланс,
 `/api/v1/me/operations` — последние 50 операций. Секретный S2S-ключ браузеру
-не нужен. Аккаунт и начальные кредиты предварительно создаёт оператор.
+не нужен. Для локальной разработки аккаунт и начальные кредиты создаёт `pnpm db:seed` (вне production).
 
 S2S-история: `GET /api/v1/s2s/wallets/:accountId/operations`, scope
 `wallets:read`, до 50 записей по убыванию последовательности. Для следующей
