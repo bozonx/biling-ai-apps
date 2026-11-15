@@ -1,3 +1,4 @@
+import { accrueGrants } from "./accrual.js";
 import { effectiveEntitlements } from "./entitlements.js";
 import { satisfiesEntitlements } from "@billing/core";
 import {
@@ -172,6 +173,8 @@ export class WalletService {
   async balance(accountId: string, productId: string) {
     return this.db.$transaction(async (tx) => {
       await this.lock(tx, accountId, productId);
+      await this.expireBuckets(tx, accountId, productId);
+      await accrueGrants(tx, accountId, productId);
       return this.expireBuckets(tx, accountId, productId);
     });
   }
@@ -187,6 +190,8 @@ export class WalletService {
   ) {
     return this.db.$transaction(async (tx) => {
       await this.lock(tx, input.accountId, productId);
+      await this.expireBuckets(tx, input.accountId, productId);
+      await accrueGrants(tx, input.accountId, productId);
       const wallet = await this.expireBuckets(tx, input.accountId, productId);
       const prior = await tx.creditOperation.findUnique({
         where: { productId_operationKey: { productId, operationKey: key } },
@@ -268,6 +273,8 @@ export class WalletService {
   ) {
     return this.db.$transaction(async (tx) => {
       await this.lock(tx, input.accountId, productId);
+      await this.expireBuckets(tx, input.accountId, productId);
+      await accrueGrants(tx, input.accountId, productId);
       const wallet = await this.expireBuckets(tx, input.accountId, productId);
       const prior = await tx.creditHold.findUnique({
         where: { productId_idempotencyKey: { productId, idempotencyKey: key } },

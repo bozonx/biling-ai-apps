@@ -201,6 +201,30 @@ test("wallet transactions serialize reservations and preserve an append-only led
       (await db.creditLedgerEntry.aggregate({ _sum: { amountMilli: true } }))
         ._sum.amountMilli,
     ).toBe(0n);
+    await db.planVersion.create({
+      data: {
+        planId: plan.id,
+        version: 2,
+        effectiveFrom: new Date(),
+        publishedAt: new Date(),
+        creditGrants: { [product.code]: "500" },
+      },
+    });
+    const balances = await Promise.all([
+      service.balance(account.id, product.id),
+      service.balance(account.id, product.id),
+    ]);
+    expect(balances.map((wallet) => wallet.balanceMilli)).toEqual([500n, 500n]);
+    expect(await db.creditOperation.count({ where: { kind: "accrual" } })).toBe(
+      1,
+    );
+    const accrued = await db.creditBucket.findFirstOrThrow({
+      where: { sourceType: "plan_grant" },
+    });
+    expect(accrued.remainingMilli).toBe(500n);
+    expect(accrued.expiresAt!.getTime()).toBeGreaterThan(Date.now());
+    expect(balances[0]!.nextAccrualAt).toEqual(accrued.expiresAt);
+    expect(balances[0]!.nextExpiryAt).toEqual(accrued.expiresAt);
   } finally {
     await db.$disconnect();
     if (previous === undefined) delete process.env.DATABASE_URL;
