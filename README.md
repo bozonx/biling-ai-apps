@@ -29,3 +29,44 @@ pnpm build
 Integration smoke запускает изолированные PostgreSQL/Redis через Testcontainers, применяет миграции, проверяет Prisma и обработку BullMQ. Нужен работающий Docker. E2E сам запускает web/API. Unit-тесты не требуют инфраструктуры. Не используйте production DATABASE_URL локально.
 
 `apps/api` — NestJS/Fastify и отдельный worker; `apps/gateway` — отдельный HTTP-процесс; `apps/web` — Nuxt 4/UI/Pinia; `packages/core` — чистый домен, `contracts` — Zod, `client` — HTTP SDK. Prisma и миграции находятся в корне. Для новой миграции: `pnpm db:migrate --name description`.
+
+### Первый срез ядра биллинга
+
+API использует PostgreSQL из `DATABASE_URL`; перед запуском выполните
+`pnpm db:generate`, `pnpm db:deploy`, `pnpm db:seed`.
+Запуск API: `pnpm --filter @billing/api dev`.
+
+S2S-запросы передают `Authorization: Bearer <key>`. В `ProductApiKey`
+хранится SHA-256 ключа, продукт и явно разрешённые scopes. Ключи создаются
+оператором в БД; открытого endpoint выдачи ключей нет. Scope `credits:grant`
+давайте только доверенному оператору, не шлюзу.
+
+| Метод и путь (префикс `/api/v1`)  | Scope           | Назначение        |
+| --------------------------------- | --------------- | ----------------- |
+| `GET /s2s/wallets/:accountId`     | `wallets:read`  | Баланс и резервы  |
+| `POST /s2s/credits/grant`         | `credits:grant` | Ручное начисление |
+| `POST /s2s/holds`                 | `holds:write`   | Резерв            |
+| `POST /s2s/holds/:holdId/commit`  | `holds:write`   | Полное списание   |
+| `POST /s2s/holds/:holdId/release` | `holds:write`   | Освобождение      |
+
+Начисление принимает `{accountId, amountMilli, creditRateVersionId}`,
+резерв — `{accountId, amountMilli, featureId}`. UUID передаются строками,
+милли-кредиты — положительными десятичными строками. Оба POST требуют
+`Idempotency-Key`. Повтор ключа с другим телом отклоняется. Закрытие резерва
+идемпотентно по его id и действию. Продукт определяется только API-ключом.
+
+Для проверки нужны аккаунт с Identity, активная ProductFeature с пустым
+`requires` и опубликованная CreditRateVersion данного продукта. Сначала
+начислите кредиты, затем создайте резерв и выполните commit либо release.
+Записи журнала и материализованный баланс обновляются одной транзакцией;
+конкурирующие операции сериализуются блокировкой кошелька.
+
+Ограничения среза: нет разрешения прав, usage, частичных списаний и фонового
+освобождения истёкших резервов. Истёкший резерв можно явно освободить через
+release; commit после срока отклоняется. Ручные партии бессрочные. Начисление
+при долге отклоняется до реализации погашения долга. Размер резерва задаёт
+доверенный S2S-клиент; публичным клиентам этот API не предназначен.
+`POST /billing/estimate` — отдельный арифметический калькулятор без изменения
+баланса, а не источник окончательной цены операции.
+
+Проверки: `pnpm check`, `pnpm test:unit`, `pnpm test:integration` (Docker).
