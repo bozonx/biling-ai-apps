@@ -7,13 +7,13 @@
 //  - Только дописываются (триггер запрещает UPDATE/DELETE): CreditOperation,
 //    CreditLedgerEntry, UsageEvent, PaymentRefund, SubscriptionEvent.
 //  - Версии после publishedAt неизменяемы (триггер, инвариант 7).
-//  - Tables are not partitioned. Idempotency uses dedicated operation keys.
+//  - Таблицы не партиционируются; идемпотентность — в отдельных ключах операций.
 //  - Ссылки на UsageEvent и из него — мягкие (без FK).
 //  - Prisma не управляет CHECK и триггерами — они в сырых миграциях
 //    (помечены «RAW»). Частичных индексов и NULLS NOT DISTINCT нет намеренно:
 //    Prisma видит их как дрейф.
 //  - Внешние идентификаторы людей (issuer/subject/email) живут только в
-//    Identity и BillingAccount (инвариант 11).
+//    IdentityBinding и BillingAccount (инвариант 11).
 //  - Product.code неизменяем: на него ссылаются Plan.productScope и ключи JSON
 //    в PlanVersion.
 //  - Связи по умолчанию onDelete: Restrict — финансовые записи не удаляются
@@ -309,6 +309,13 @@ enum LimitAction {
   deny
 }
 
+enum CheckoutSessionStatus {
+  pending
+  completed
+  failed
+  expired
+}
+
 enum QuotaReservationStatus {
   open
   committed
@@ -390,6 +397,7 @@ model Product {
   apiKeys              ProductApiKey[]
   webhookEndpoints     ProductWebhookEndpoint[]
   outboxEvents         OutboxEvent[]
+  checkoutSessions     CheckoutSession[]
 }
 
 /// Реестр прав продукта (§6.1)
@@ -414,9 +422,7 @@ model ProductEntitlementKey {
 // Identity и аккаунты (§5)
 // ============================================================================
 
-/// (issuer, subject) → actorId. Единственное место внешнего id человека.
-/// При удалении (§20) issuer/subject обнуляются, ставится deletedAt.
-/// RAW: CHECK ((deletedAt IS NULL) = (issuer IS NOT NULL AND subject IS NOT NULL))
+/// Постоянный actorId. Внешние пары (issuer, subject) — в IdentityBinding.
 model Identity {
   id        String    @id @default(uuid(7)) @db.Uuid // = actorId
   createdAt DateTime  @default(now()) @db.Timestamptz(3)
@@ -473,6 +479,7 @@ model BillingAccount {
   quotaUsages          QuotaUsage[]
   quotaReservations    QuotaReservation[]
   quotaSnapshots       QuotaUsageSnapshot[]
+  checkoutSessions     CheckoutSession[]
 
   @@unique([productId, externalRef])
   @@index([ownerIdentityId])
@@ -587,6 +594,7 @@ model PlanVersion {
   referralRewards        ReferralReward[]
 
   @@unique([planId, version])
+  @@index([requiresBasePlanId])
 }
 
 /// Как версия продаётся через источник (§7.1).
@@ -607,10 +615,11 @@ model Offer {
   isActive        Boolean         @default(true)
   createdAt       DateTime        @default(now()) @db.Timestamptz(3)
 
-  planVersion            PlanVersion    @relation(fields: [planVersionId], references: [id], onDelete: Restrict)
-  subscriptions          Subscription[] @relation("SubscriptionOffer")
-  scheduledSubscriptions Subscription[] @relation("SubscriptionScheduledOffer")
+  planVersion            PlanVersion       @relation(fields: [planVersionId], references: [id], onDelete: Restrict)
+  subscriptions          Subscription[]    @relation("SubscriptionOffer")
+  scheduledSubscriptions Subscription[]    @relation("SubscriptionScheduledOffer")
   payments               Payment[]
+  checkoutSessions       CheckoutSession[]
 
   @@index([source, externalPriceId])
   @@index([planVersionId])
@@ -646,10 +655,13 @@ model CreditPackOffer {
   isActive        Boolean       @default(true)
   createdAt       DateTime      @default(now()) @db.Timestamptz(3)
 
-  creditPack CreditPack @relation(fields: [creditPackId], references: [id], onDelete: Restrict)
-  purchases  Purchase[]
+  creditPack       CreditPack        @relation(fields: [creditPackId], references: [id], onDelete: Restrict)
+  purchases        Purchase[]
+  checkoutSessions CheckoutSession[]
 
-  @@unique([source, externalPriceId])
+  /// не уникален: региональные цены живут внутри одной цены источника (как у Offer)
+  @@index([source, externalPriceId])
+  @@index([creditPackId])
 }
 
 /// Реестр платных действий продукта (§7.1)
@@ -709,7 +721,8 @@ model Promotion {
   createdAt          DateTime      @default(now()) @db.Timestamptz(3)
   updatedAt          DateTime      @updatedAt @db.Timestamptz(3)
 
-  redemptions PromotionRedemption[]
+  redemptions      PromotionRedemption[]
+  checkoutSessions CheckoutSession[]
 }
 
 /// Погашение акции: идемпотентность и лимиты считаются по строкам
@@ -717,13 +730,15 @@ model PromotionRedemption {
   id             String   @id @default(uuid(7)) @db.Uuid
   promotionId    String   @db.Uuid
   accountId      String   @db.Uuid
-  idempotencyKey String   @unique // напр. 'payment:<paymentId>'
+  idempotencyKey String // напр. 'payment:<paymentId>'; уникален в пределах акции
   createdAt      DateTime @default(now()) @db.Timestamptz(3)
 
   promotion Promotion      @relation(fields: [promotionId], references: [id], onDelete: Restrict)
   account   BillingAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
 
+  @@unique([promotionId, idempotencyKey])
   @@index([promotionId, accountId])
+  @@index([accountId])
 }
 
 // ============================================================================
@@ -870,6 +885,9 @@ model CreditHold {
   expiresAt           DateTime   @db.Timestamptz(3)
   closedAt            DateTime?  @db.Timestamptz(3)
   idempotencyKey      String
+  /// окна лимитов, в которых резерв занял `reserved`: [{ scopeKey, windowStart, meter, amount }]
+  /// — по ним release/expire возвращают ровно то, что заняли, даже если правила сменились
+  limitReservations   Json       @default("[]")
   createdAt           DateTime   @default(now()) @db.Timestamptz(3)
 
   account           BillingAccount     @relation(fields: [accountId], references: [id], onDelete: Restrict)
@@ -1059,6 +1077,7 @@ model Subscription {
   @@unique([source, externalSubscriptionId])
   @@index([accountId, status])
   @@index([status, currentPeriodEnd])
+  @@index([planVersionId])
 }
 
 /// История подписки: смены статуса и тарифа. Только дописывается (RAW-триггер).
@@ -1084,19 +1103,20 @@ model SubscriptionEvent {
 
 /// creditsMilli/validityDays — снимок пакета на момент покупки
 model Purchase {
-  checkoutSessionId String?        @unique @db.Uuid
-  id                String         @id @default(uuid(7)) @db.Uuid
-  accountId         String         @db.Uuid
-  productId         String         @db.Uuid
-  creditPackOfferId String         @db.Uuid
+  checkoutSessionId String?          @unique @db.Uuid
+  checkoutSession   CheckoutSession? @relation(fields: [checkoutSessionId], references: [id], onDelete: Restrict)
+  id                String           @id @default(uuid(7)) @db.Uuid
+  accountId         String           @db.Uuid
+  productId         String           @db.Uuid
+  creditPackOfferId String           @db.Uuid
   creditsMilli      BigInt
   validityDays      Int
   source            PaymentSource
   externalId        String?
-  status            PurchaseStatus @default(pending)
-  bucketId          String?        @unique @db.Uuid
-  createdAt         DateTime       @default(now()) @db.Timestamptz(3)
-  updatedAt         DateTime       @updatedAt @db.Timestamptz(3)
+  status            PurchaseStatus   @default(pending)
+  bucketId          String?          @unique @db.Uuid
+  createdAt         DateTime         @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime         @updatedAt @db.Timestamptz(3)
 
   account         BillingAccount  @relation(fields: [accountId], references: [id], onDelete: Restrict)
   product         Product         @relation(fields: [productId], references: [id], onDelete: Restrict)
@@ -1105,6 +1125,8 @@ model Purchase {
   payments        Payment[]
 
   @@unique([source, externalId])
+  @@unique([bucketId, accountId, productId])
+  @@index([accountId, createdAt])
 }
 
 /// planVersionId/offerId — снимок «за что заплачено» на момент платежа:
@@ -1197,6 +1219,8 @@ model PlanGrant {
 
   @@unique([productId, idempotencyKey])
   @@index([accountId, productId, status])
+  @@index([planVersionId])
+  @@index([planId])
 }
 
 // ============================================================================
@@ -1256,6 +1280,8 @@ model ReferralCode {
   program   ReferralProgram @relation(fields: [programId], references: [id], onDelete: Restrict)
   clicks    ReferralClick[]
   referrals Referral[]
+
+  @@index([partnerId])
 }
 
 /// Только хэш посетителя (§20)
@@ -1282,12 +1308,13 @@ model Referral {
   attributedAt      DateTime       @default(now()) @db.Timestamptz(3)
   convertedAt       DateTime?      @db.Timestamptz(3)
 
-  code            ReferralCode           @relation(fields: [codeId], references: [id], onDelete: Restrict)
-  program         ReferralProgram        @relation(fields: [programId], references: [id], onDelete: Restrict)
-  programVersion  ReferralProgramVersion @relation(fields: [programVersionId], references: [id], onDelete: Restrict)
-  referredAccount BillingAccount         @relation("ReferredAccount", fields: [referredAccountId], references: [id], onDelete: Restrict)
-  product         Product                @relation(fields: [productId], references: [id], onDelete: Restrict)
-  rewards         ReferralReward[]
+  code             ReferralCode           @relation(fields: [codeId], references: [id], onDelete: Restrict)
+  program          ReferralProgram        @relation(fields: [programId], references: [id], onDelete: Restrict)
+  programVersion   ReferralProgramVersion @relation(fields: [programVersionId], references: [id], onDelete: Restrict)
+  referredAccount  BillingAccount         @relation("ReferredAccount", fields: [referredAccountId], references: [id], onDelete: Restrict)
+  product          Product                @relation(fields: [productId], references: [id], onDelete: Restrict)
+  rewards          ReferralReward[]
+  checkoutSessions CheckoutSession[]
 
   @@unique([referredAccountId, productId])
   @@index([codeId])
@@ -1329,7 +1356,8 @@ model ReferralReward {
 // Лимиты (§8.8)
 // ============================================================================
 
-/// Предохранители продукта / экземпляра
+/// Предохранители продукта / экземпляра. Счётчики — приблизительные, в Redis
+/// (не в LimitUsageWindow): общая строка окна стала бы глобальной блокировкой.
 model LimitPolicy {
   id        String           @id @default(uuid(7)) @db.Uuid
   productId String?          @db.Uuid
@@ -1615,26 +1643,41 @@ model IdentityBinding {
   @@index([identityId])
 }
 
+/// productId — продукт, который создал checkout (его ключ API или страница);
+/// ключ идемпотентности — в его пространстве, как у остальных операций.
+/// RAW: CHECK ((offerId IS NULL) <> (creditPackOfferId IS NULL))
 model CheckoutSession {
-  id                String        @id @default(uuid(7)) @db.Uuid
-  accountId         String        @db.Uuid
+  id                String                @id @default(uuid(7)) @db.Uuid
+  accountId         String                @db.Uuid
+  productId         String                @db.Uuid
   source            PaymentSource
   externalId        String?
-  idempotencyKey    String        @unique
-  offerId           String?       @db.Uuid
-  creditPackOfferId String?       @db.Uuid
-  promotionId       String?       @db.Uuid
-  referralId        String?       @db.Uuid
+  idempotencyKey    String
+  offerId           String?               @db.Uuid
+  creditPackOfferId String?               @db.Uuid
+  promotionId       String?               @db.Uuid
+  referralId        String?               @db.Uuid
   returnUrl         String
-  status            String        @default("pending")
-  expiresAt         DateTime      @db.Timestamptz(3)
-  createdAt         DateTime      @default(now()) @db.Timestamptz(3)
+  status            CheckoutSessionStatus @default(pending)
+  expiresAt         DateTime              @db.Timestamptz(3)
+  createdAt         DateTime              @default(now()) @db.Timestamptz(3)
 
+  account         BillingAccount   @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  product         Product          @relation(fields: [productId], references: [id], onDelete: Restrict)
+  offer           Offer?           @relation(fields: [offerId], references: [id], onDelete: Restrict)
+  creditPackOffer CreditPackOffer? @relation(fields: [creditPackOfferId], references: [id], onDelete: Restrict)
+  promotion       Promotion?       @relation(fields: [promotionId], references: [id], onDelete: Restrict)
+  referral        Referral?        @relation(fields: [referralId], references: [id], onDelete: Restrict)
+  purchase        Purchase?
+
+  @@unique([productId, idempotencyKey])
   @@unique([source, externalId])
   @@index([accountId, createdAt])
   @@index([status, expiresAt])
 }
 
+/// Долговечные окна лимитов клиента (LimitRule, scope actor/account) — §8.8.
+/// Для LimitPolicy (product/deployment) строки не создаются.
 model LimitUsageWindow {
   scopeKey    String
   windowStart DateTime   @db.Timestamptz(3)
