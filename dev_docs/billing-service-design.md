@@ -1,6 +1,6 @@
 # Биллинг-сервис для AI-продуктов — дизайн
 
-Статус: черновик v3 · 2026-11-15
+Статус: черновик v4 · 2026-11-15
 
 Отдельный сервис подписок, кредитов, квот и рефералов для продуктов **TyCo**,
 **FastCat**, **BloggerDog** и будущих. Первый и пока единственный потребитель —
@@ -66,7 +66,9 @@ BloggerDog позже подключается к сервису как обыч
  новая запись, никогда не правка старой.
 4. **Деньги — целые числа в микроединицах** (`1_000_000 = 1 USD`), `BigInt`.
  Каждая денежная запись хранит исходную валюту и сумму **и** эквивалент в
- USD-микро на момент события (§12.1).
+ USD-микро на момент события (§12.1). **Себестоимость AI — в нано-USD**
+ (`1_000_000_000 = 1 USD`): дешёвые вызовы стоят доли микро, и округление на
+ каждом событии исказило бы маржу.
 5. **Кредиты в журнале — целые милли-кредиты** (`1000 = 1 кредит`). Клиенту
  показываем кредиты с округлением вниз. Так дешёвые вызовы стоят столько,
  сколько стоят, без минимума «1 кредит».
@@ -79,6 +81,17 @@ BloggerDog позже подключается к сервису как обыч
  И никаких `if product === 'tyco'` в ядре: всё различие продуктов — в данных.
 9. **Учёт потребления — только на сервере.** Клиентские приложения (Tauri,
  браузер, мобильные) никогда не сообщают о расходе сами.
+10. **Владелец денег и исполнитель действия — разные поля.** Балансы, права и
+ подписки принадлежат `BillingAccount`; кто именно совершил действие —
+ `actorId` (внутренний id `Identity`, §5.1). Код ядра нигде не предполагает,
+ что аккаунт = один человек: так командные аккаунты добавляются без
+ переделки журнала, резервов и лимитов (§5.3).
+11. **Внешние идентификаторы людей не пишутся в неизменяемые таблицы.** В журнал
+ и `UsageEvent` идёт `actorId`, а `(issuer, subject)` и email живут только в
+ `Identity` и `BillingAccount` — их можно обезличить без правки журнала.
+12. **Первичные ключи — UUIDv7** (сортируемы по времени). Большие таблицы
+ (`CreditLedgerEntry`, `UsageEvent`) готовы к партиционированию по времени:
+ на `UsageEvent` нет внешних ключей, ссылки на него мягкие.
 
 ---
 
@@ -90,7 +103,9 @@ BloggerDog позже подключается к сервису как обыч
 | **Deployment** (экземпляр) | Отдельный запуск сервиса со своей БД и своими аккаунтами MoR. `ivan-apps` (TyCo + FastCat), позже `bloggerdog`.        |
 | **Product**                | Продукт внутри экземпляра: `tyco`, `fastcat`. Свои тарифы, кошельки, права, квоты.                                     |
 | **Subject**                | Внешний идентификатор пользователя: `sub` из IdP или id пользователя в продукте. Биллинг не хранит паролей и профилей. |
-| **BillingAccount**         | Тот, кто платит и чьи балансы. Личный (одному subject) или командный (сущность продукта).                              |
+| **Identity**               | Внутренний id человека: `(issuer, subject)` → `actorId`. Пишется в журнал вместо внешнего `subject`.                  |
+| **BillingAccount**         | Тот, кто платит и чьи балансы. Личный (`personal`) или командный (`team`, позже, §5.3).                                |
+| **Actor**                  | Кто совершил действие (`actorId`). У личного аккаунта совпадает с владельцем, у командного — участник.                 |
 | **Plan / PlanVersion**     | Тариф и его неизменяемая версия: период, права, начисления.                                                            |
 | **Offer**                  | Как версия тарифа продаётся через конкретный источник: price id в Paddle/Polar, product id в RevenueCat.               |
 | **Entitlement**            | Право: ключ → значение (`int`, `bool`, `enum`). Реестр свой у каждого продукта.                                        |
@@ -202,8 +217,18 @@ email/пароль, magic link, Google/Apple OAuth, подтверждение e
 loopback/deep link для Tauri.
 - Биллинг проверяет access token IdP по JWKS и берёт из него `sub`, email,
 `email_verified`. Падение биллинга не мешает входу, и наоборот.
+- Внешний идентификатор сразу превращается во внутренний:
+
+```
+Identity   id (= actorId), issuer, subject, createdAt, deletedAt?
+           UNIQUE (issuer, subject)
+```
+
+  `issuer` — URL IdP или `product:<productId>` для продуктов со своим auth.
+  Смена IdP — новая строка `Identity` и перепривязка, журнал не меняется.
 - В экземплярах без общего IdP (позже `bloggerdog`) продукт сам аутентифицирует
-пользователя и обращается к биллингу по S2S, передавая свой `subject`.
+пользователя и обращается к биллингу по S2S, передавая свой `subject`
+(`Identity.issuer = product:<productId>`).
 - Админка — вход через тот же IdP, роли сотрудников (`StaffRole`) хранятся в
 биллинге.
 
@@ -212,25 +237,60 @@ loopback/deep link для Tauri.
 ```
 BillingAccount
   id
-  ownerType: 'subject' | 'external'
-  ownerSubject?                        -- для личных: sub из IdP
-  productId?, externalRef?             -- для командных: продукт и id команды в нём
-  country, email
+  kind: 'personal' | 'team'            -- 'team' в v1 не создаётся
+  ownerIdentityId?                     -- personal: владелец; team: кто создал/платит
+  productId?, externalRef?             -- team: продукт и id команды в нём
+                                       -- UNIQUE (productId, externalRef)
+  country, email                       -- email для писем (у team — плательщика)
   status: 'active' | 'suspended' | 'deleted'
+  UNIQUE (ownerIdentityId) WHERE kind = 'personal'
+
+AccountCustomer                        -- клиент у источника оплаты
+  accountId, source, externalCustomerId
+  UNIQUE (source, externalCustomerId), UNIQUE (accountId, source)
 ```
 
 - У пользователя в экземпляре один личный `BillingAccount` на все продукты:
 одна история платежей, один клиент в MoR. Создаётся лениво при первом
 обращении.
-- Командные аккаунты — отдельные `BillingAccount` с местами.
-- Покупатель в MoR (`providerCustomerId`) привязан к `BillingAccount`.
+- Командный аккаунт — такой же `BillingAccount` с `kind='team'`: свои
+кошельки, подписки, клиент в MoR. Все таблицы денег и прав ссылаются только
+на `accountId`, поэтому командный аккаунт не требует новых колонок в них.
+- Клиент у источника — отдельная таблица: у аккаунта может быть клиент и в
+Polar, и в RevenueCat, и в Paddle.
 
 ### 5.3. Команды
 
+Командные аккаунты нужны BloggerDog (этап 8); в v1 их нет, но схема v1 уже
+их допускает. Добавление — новые эндпоинты и одна таблица, без изменения
+существующих.
+
 **Членство и роли команды живут в продукте**, не в биллинге. Биллинг знает:
-число мест (право/квота `seats`, §14) и `subject` того, кто делает вызов, —
-этого хватает для лимитов участника (§8.8). Продукт сообщает биллингу
-занятые места (`PUT /v1/quotas/usage`, квота-уровень `seats`).
+число мест (квота `seats`, §14) и `actorId` того, кто делает вызов, — этого
+хватает для лимитов участника (§8.8). Продукт сообщает биллингу занятые места
+(`PUT /v1/quotas/usage`, квота-уровень `seats`).
+
+Что уже заложено в v1, чтобы команды добавились без переделки:
+
+| Где                          | Что                                                                                   |
+| ---------------------------- | ------------------------------------------------------------------------------------- |
+| `BillingAccount`             | `kind`, `productId`, `externalRef` — колонки есть, `team` просто не создаётся         |
+| журнал, резервы, `UsageEvent` | `accountId` (чей баланс) и `actorId` (кто потратил) — раздельно (инвариант 10)        |
+| `LimitRule.scope`            | `actor` и `account` — лимит участника и лимит команды уже выражаются                  |
+| `Subscription.quantity`      | количество у MoR (места по цене за место); в v1 всегда 1                              |
+| квоты                        | места — квота `seats`, не отдельная сущность                                          |
+| API                          | S2S-вызовы принимают `accountId` + `actorId`, а не «текущего пользователя»            |
+
+Что добавится на этапе 8:
+
+- `POST /v1/accounts/external` (`kind='team'`, продукт передаёт `externalRef`).
+- Проверка, что `actorId` вправе тратить с аккаунта: продукт, владеющий
+  членством, подтверждает это своим S2S-ключом при каждом вызове. Если
+  понадобится проверка на стороне биллинга (вызовы приложения с токеном
+  пользователя напрямую) — таблица-кэш `AccountMember (accountId, identityId,
+  role, syncedAt)`, которую продукт синхронизирует; она чисто добавочная.
+- Покупка за команду: checkout с `accountId` команды, вызывает продукт.
+- Квота `seats` и место-зависимые цены (`quantity` в MoR).
 
 ### 5.4. Кошельки и права — по продуктам
 
@@ -304,8 +364,7 @@ MarkupPolicyVersion id, productId, version, tiers (jsonb), effectiveFrom
 Plan               id, productScope[], code, name,
                    kind: 'base' | 'addon' | 'bundle',
                    visibility: 'public' | 'unlisted' | 'archived', sortOrder
-PlanVersion        id, planId, version, interval: 'month' | 'year',
-                   trialDays,
+PlanVersion        id, planId, version,
                    entitlements  (по продуктам: { tyco: {...} }),
                    quotas        (по продуктам: { tyco: { 'storage.bytes': … } }),
                    creditGrants  (по продуктам, милли-кредиты за месяц),
@@ -313,14 +372,19 @@ PlanVersion        id, planId, version, interval: 'month' | 'year',
                    requiresBasePlanId? (для addon),
                    effectiveFrom, effectiveTo, publishedAt
 Offer              id, planVersionId, source: 'paddle'|'polar'|'revenuecat'|'manual',
+                   interval: 'month' | 'year', trialDays,
                    externalPriceId, amountMicros, currency, region?, isActive
 CreditPack         id, productId, code, credits, validityDays, visibility
 CreditPackOffer    id, creditPackId, source, externalPriceId, amountMicros, currency
 ProductFeature     id, productId, key, requiredEntitlement?, pricing: 'fixed'|'metered',
                    defaultRouteId?, defaultHoldTtlSec, status
 FeaturePrice       id, featureId, version, credits (фикс. цена действия, §10.5)
-Promotion          id, code, kind, rules, startsAt, endsAt, maxRedemptions
+Promotion          (этап 4+) id, code, kind, rules, startsAt, endsAt, maxRedemptions
 ```
+
+- **Период и триал — в `Offer`, не в версии.** Месячный и годовой Pro — одна
+  версия тарифа (одни права, кредиты за месяц) с двумя офферами. Годовой
+  начисляет кредиты ежемесячными порциями (§8.3).
 
 - `ProductFeature` — реестр платных действий продукта (как реестр прав):
   reserve с неизвестной `feature` отклоняется, право проверяется по
@@ -403,31 +467,51 @@ Promotion          id, code, kind, rules, startsAt, endsAt, maxRedemptions
 ### 8.2. Модель
 
 ```
-CreditWallet       accountId, productId, debtMilli (≥ 0), version   -- строка для блокировки
+CreditWallet       accountId, productId,
+                   balanceMilli, heldMilli, debtMilli (≥ 0),     -- материализация
+                   lastGrantPeriodStart?, version                 -- строка для блокировки
+                   PK (accountId, productId)
 CreditBucket       id, accountId, productId,
                    kind: 'plan' | 'pack' | 'promo' | 'referral' | 'compensation' | 'trial',
-                   grantedMilli, expiresAt?, creditRateVersionId,
-                   sourceType, sourceId, createdAt
+                   grantedMilli, remainingMilli (материализация), expiresAt?,
+                   creditRateVersionId, sourceType, sourceId, periodStart?, createdAt
+                   UNIQUE NULLS NOT DISTINCT (accountId, productId, sourceType, sourceId, periodStart)
 CreditLedgerEntry  id, accountId, productId, bucketId?, amountMilli (+/-),
                    reason: 'accrual'|'purchase'|'consumption'|'expiry'|'refund'|
-                           'revoke'|'adjustment'|'referral_reward'|'promo'|'debt',
-                   operationKey, subject?, usageEventId?, paymentId?, holdId?,
+                           'revoke'|'adjustment'|'referral_reward'|'promo'|
+                           'debt'|'debt_repayment',
+                   operationKey, actorId?, usageEventId?, paymentId?, holdId?,
                    meta, createdAt
-                   UNIQUE NULLS NOT DISTINCT (operationKey, bucketId)
-CreditHold         id, accountId, productId, subject?, featureId, amountMilli,
+                   UNIQUE NULLS NOT DISTINCT (productId, operationKey, bucketId, reason)
+CreditHold         id, accountId, productId, actorId?, featureId,
+                   amountMilli, committedMilli, priceVersionId?,
                    kind: 'hold'|'lease',
                    status: 'open'|'committed'|'released'|'expired',
-                   expiresAt, idempotencyKey (unique), createdAt
+                   expiresAt, idempotencyKey, createdAt
+                   UNIQUE (productId, idempotencyKey)
 ```
+
+- **Материализации** (`balanceMilli`, `heldMilli`, `remainingMilli`) обновляются
+  в той же транзакции, что и запись журнала; ночная проверка сверяет их с
+  суммой журнала и алертит расхождение. Reserve читает одну строку кошелька.
+- **Защита от двойного начисления** — уникальность партии по источнику и
+  периоду: повторная обработка `subscription.renewed` или ленивое начисление
+  в двух параллельных запросах не создадут вторую порцию.
+- **Ключи идемпотентности — в пространстве продукта**: разные продукты могут
+  прислать одинаковый ключ.
+- `committedMilli` нужен lease с несколькими commit и `extend`;
+  `priceVersionId` фиксирует цену, по которой сделана оценка.
 
 - Остаток партии — сумма журнала по ней; материализуется в `bucket_balances`
 в той же транзакции для скорости чтения. Источник правды — журнал.
 - **Резерв — на уровне кошелька**, не партий: `свободно = Σ остатков
 непросроченных партий − Σ открытых резервов − долг`. По партиям сумма
 раскладывается только при commit (§8.4).
-- **Идемпотентность журнала** — по паре `(operationKey, bucketId)`: одно
-списание из двух партий даёт две записи с одним `operationKey`. Записи долга
-идут без партии (`bucketId = NULL`), поэтому индекс — `NULLS NOT DISTINCT`
+- **Идемпотентность журнала** — по `(productId, operationKey, bucketId,
+reason)`: одно списание из двух партий даёт две записи с одним
+`operationKey`; начисление с погашением долга даёт на одной партии записи
+`accrual` и `debt_repayment` — их различает `reason`. Записи долга идут без
+партии (`bucketId = NULL`), поэтому индекс — `NULLS NOT DISTINCT`
 (Postgres 15+; создаётся сырой миграцией, Prisma этого не умеет), иначе
 повтор записи долга не ловится.
 - **Долг** живёт на кошельке (`debtMilli`), а не в партии. Перерасход (§8.6)
@@ -487,14 +571,14 @@ release, после которого у кошелька есть свободн
 ### 8.6. Протокол reserve → commit/release
 
 ```
-POST /v1/credits/holds          { accountId, productId, subject, feature,
-                                  routeId?, estimate?: { meters | costMicros },
+POST /v1/credits/holds          { accountId, productId, actorId, feature,
+                                  routeId?, estimate?: { meters | costNanos },
                                   ttlSec? }
   → 201 { holdId, credits }   |  402 CREDITS_EXHAUSTED  |  403 ENTITLEMENT_DENIED
                               |  429 LIMIT_EXCEEDED
-POST /v1/credits/holds/:id/commit   { meters, providerCostMicros?, usageEventId, partial? }
+POST /v1/credits/holds/:id/commit   { meters, providerCostNanos?, usageEventId, partial? }
   → { charged, refunded }
-POST /v1/credits/holds/:id/extend   { meters, addEstimate }    -- стриминг
+POST /v1/credits/holds/:id/extend   { meters, addEstimate }    -- стриминг, этап 2+
 POST /v1/credits/holds/:id/release  { reason }
 ```
 
@@ -524,7 +608,7 @@ POST /v1/credits/holds/:id/release  { reason }
 
 Для командных аккаунтов и параллельных агентов блокировка кошелька на каждый
 вызов станет узким местом. Шлюз может взять **lease** — резерв на
-`(account, product, subject)` размером N кредитов на T секунд — и расходовать
+`(account, product, actor)` размером N кредитов на T секунд — и расходовать
 его локально, отправляя в биллинг пачки `UsageEvent` (commit по lease). Остаток
 возвращается по истечении. Протокол тот же, что у hold; lease — это hold с
 `kind='lease'` и множественными commit. В SDK шлюза — готовый клиент.
@@ -533,7 +617,7 @@ POST /v1/credits/holds/:id/release  { reason }
 блокировок станет заметным (метрика в §18).
 
 Параметры по умолчанию (настройка продукта): срок 60 с; размер — удвоенный
-расход этого `subject` за последнюю минуту, не меньше 20 кредитов и не больше
+расход этого `actor` за последнюю минуту, не меньше 20 кредитов и не больше
 10 % свободного баланса; продление — когда израсходовано 70 %. Если свободный
 баланс меньше пяти минимальных lease, шлюз работает обычными hold, чтобы
 остаток не лежал в резерве.
@@ -544,10 +628,10 @@ POST /v1/credits/holds/:id/release  { reason }
 два источника с одной формой правила:
 
 ```
-LimitRule    scope: 'subject'|'account', window: 'minute'|'hour'|'day'|'month',
-             meter: 'credits'|'cost_micros'|'requests', max, feature?
+LimitRule    scope: 'actor'|'account', window: 'minute'|'hour'|'day'|'month',
+             meter: 'credits'|'cost_nanos'|'requests', max, feature?
 LimitPolicy  productId?, scope: 'product'|'deployment', window, meter, max,
-             action: 'deny'|'alert'
+             action: 'deny'            -- 'alert' добавим, когда понадобится
 ```
 
 - **Лимиты клиента** — массив `LimitRule` в `PlanVersion.limits`; у
@@ -618,10 +702,19 @@ meters: {
 }
 ```
 
-`UsageEvent` хранит вектор (`jsonb`) и основные счётчики отдельными колонками.
-Плюс `costMicros`, `priceVersionId`, `markupPolicyVersionId`,
-`creditRateVersionId`, `creditsChargedMilli`, `provider`, `model`, `routeId`,
-`feature`, `subject`, `status`, `traceId`, `rawUsage`.
+```
+UsageEvent   id (UUIDv7), accountId, productId, actorId?, holdId?,
+             featureId, routeId?, provider, model,
+             meters (jsonb), inputTokens, outputTokens,      -- основные отдельно
+             costNanos, priceVersionId?, markupPolicyVersionId?,
+             creditRateVersionId?, featurePriceId?, creditsChargedMilli,
+             status: 'ok'|'error'|'partial'|'late', byok,
+             idempotencyKey, traceId, rawUsage (jsonb), occurredAt, createdAt
+             UNIQUE (productId, idempotencyKey)
+```
+
+Внешних ключей на `UsageEvent` и из него нет (инвариант 12): таблица
+партиционируется по `occurredAt`, когда вырастет.
 
 ### 10.2. Таблица цен
 
@@ -629,7 +722,7 @@ meters: {
 ModelRoute         id, provider, model, kind: 'llm'|'stt'|'tts'|'image'|'video'|'mt'|'embed'
 RoutePriceVersion  id, routeId, version, effectiveFrom, effectiveTo,
                    source: 'manual'|'seed'|'sync'|'provider-api', approvedBy
-RoutePriceItem     priceVersionId, meter, unitMicros, per (1 | 1e6 …),
+RoutePriceItem     priceVersionId, meter, unitNanos, per (1 | 1e6 …),
                    tier? { fromContextTokens, … }, minBillableUnits?
 ```
 
@@ -668,8 +761,11 @@ LiteLLM (как данные), models.dev; сравнивает с действ�
 2. **По формуле** (из `credit-pricing.rules.ts`), в милли-кредитах:
 
 ```
-creditsMilli = ceil(costMicros × markup × 1000 / creditValueMicros)
+creditsMilli = ceil(costNanos × markup / creditValueMicros)
 ```
+
+(`costNanos / 1000` — микро-USD, `× 1000` — милли-кредиты; множители
+сокращаются.) Курс кредита остаётся в микро-USD.
 
 `markup` — по ступеням стоимости модели (выше на дешёвых, ниже на топовых),
 политика на продукт, версия пишется в событие. Минимума «1 кредит» нет; при
@@ -677,7 +773,7 @@ creditsMilli = ceil(costMicros × markup × 1000 / creditValueMicros)
 
 ### 10.6. Сверка с провайдерами (этап 5)
 
-Ежемесячно воркер сравнивает сумму `costMicros` по провайдеру со счётом
+Ежемесячно воркер сравнивает сумму `costNanos` по провайдеру со счётом
 провайдера (billing/usage API: OpenAI, Anthropic, OpenRouter, Google Cloud
 Billing export; иначе — ввод суммы в админке). Расхождение больше порога
 (3 %) — алерт.
@@ -771,15 +867,30 @@ purchase.succeeded (pack/consumable) | refunded
 
 ```
 Subscription   id, accountId, planVersionId, offerId, source,
-               externalSubscriptionId (unique per source), externalCustomerId,
+               externalSubscriptionId, externalCustomerId,
                status, currentPeriodStart, currentPeriodEnd, trialEndsAt,
-               cancelAtPeriodEnd, pausedAt?, seats, version
+               cancelAtPeriodEnd, quantity (= 1 в v1; места для команд),
+               lastSyncedAt, version
+               UNIQUE (source, externalSubscriptionId)
+Purchase       id, accountId, productId, creditPackOfferId, source, externalId,
+               status: 'pending'|'paid'|'refunded', bucketId?, createdAt
+               UNIQUE (source, externalId)
 Payment        id, accountId, subscriptionId?, purchaseId?, source, externalId, kind,
                status, currency,
                grossMicros, taxMicros, feeMicros, discountMicros, netMicros,  -- в валюте платежа
                grossUsdMicros, netUsdMicros, fxRate, fxSource, netIsEstimated,
-               refundedAmountMicros (накопительно), occurredAt
+               refundedMicros (материализация суммы PaymentRefund), occurredAt
+               UNIQUE (source, externalId)
+PaymentRefund  id, paymentId, source, externalId, kind: 'refund'|'chargeback',
+               amountMicros, amountUsdMicros, occurredAt
+               UNIQUE (source, externalId)
 ```
+
+- **Возврат — отдельная запись**, не правка платежа (как журнал кредитов).
+  Если источник присылает только накопительную сумму, обработчик создаёт
+  запись на разницу с уже учтённым.
+- `paused` / `pausedAt` в v1 нет: Polar для TyCo паузу не используем;
+  статус добавляется вместе с RevenueCat (этап 7).
 
 - У аккаунта может быть несколько подписок: базовая на продукт, бандлы,
 дополнения (каждое — отдельная подписка, §7.5).
@@ -791,7 +902,7 @@ Payment        id, accountId, subscriptionId?, purchaseId?, source, externalId, 
 
 ### 12.2. Статусы
 
-`trialing → active → past_due → read_only → expired`, плюс `paused`. Отмена —
+`trialing → active → past_due → read_only → expired` (позже `paused`). Отмена —
 не статус, а флаг `cancelAtPeriodEnd` (подписка остаётся `active` до конца
 периода, затем `expired`). Грейс `past_due` — в настройках продукта (7 дней).
 Повторные списания делает MoR или магазин; их статусы маппятся на наши.
@@ -967,6 +1078,26 @@ HTTP 402, из-за лимита частоты — 429.
 `quota.retention_due`. SDK проверяет подпись и сбрасывает кэш прав. Кэш прав в
 SDK — 60 секунд плюс сброс по событию.
 
+### 16.4. Служебные таблицы
+
+```
+ProductApiKey         id, productId, keyHash (SHA-256), prefix, scopes[],
+                      status: 'active'|'revoked', lastUsedAt, createdAt
+ProductWebhookEndpoint id, productId, url, secret (шифрованно), events[], status
+OutboxEvent           id, productId?, type, payload, status, attempts,
+                      nextAttemptAt, deliveredAt
+BillingWebhookEvent   id, source, externalEventId, payload, status, attempts,
+                      processedAt, error      UNIQUE (source, externalEventId)
+EntitlementOverride   id, accountId, productId, key, value, reason,
+                      createdBy, expiresAt?, revokedAt?
+LimitOverride         id, accountId, productId, rule (jsonb), reason,
+                      createdBy, expiresAt?
+StaffRole             identityId, role: 'owner'|'admin'|'support'|'viewer'
+AdminAuditLog         id, actorIdentityId, action, targetType, targetId,
+                      before, after, createdAt
+MailOutbox            как в BloggerDog
+```
+
 ---
 
 ## 17. Веб: портал клиента и админка
@@ -1013,6 +1144,10 @@ reserve/commit (порог для включения lease), поздние comm
 срабатывание — отказ в резервах и алерт.
 - **Резервное копирование:** PITR для Postgres; журнал кредитов — критичные
 данные.
+- **Рост таблиц:** `CreditLedgerEntry` и `UsageEvent` — UUIDv7 и индексы с
+`createdAt`/`occurredAt` первым или вторым полем; партиционирование
+включаем по объёму, без смены ключей. Сверка материализаций с журналом —
+ночная задача воркера.
 
 ---
 
@@ -1026,7 +1161,7 @@ reserve/commit (порог для включения lease), поздние comm
 - Лимиты частоты — отдельно от кредитов (§8.8): кредиты — про деньги, лимиты —
 про злоупотребления и зацикленных агентов.
 - BYOK — право `byok.allowed`; вызовы с BYOK пишут `UsageEvent` с
-`costMicros=0` и не списывают кредиты (плата за платформу — правило продукта).
+`costNanos=0` и не списывают кредиты (плата за платформу — правило продукта).
 
 ---
 
@@ -1035,9 +1170,13 @@ reserve/commit (порог для включения lease), поздние comm
 - Удаление из одного продукта и удаление аккаунта целиком — разные операции.
 - Профиль пользователя хранится в IdP; биллинг хранит минимум (`subject`,
 email для писем, страна).
-- При полном удалении: обезличивание `BillingAccount`; финансовые записи
-храним обезличенными столько, сколько требует закон; у MoR и RevenueCat —
-запрос на удаление через API.
+- При полном удалении: у `Identity` стираются `issuer`/`subject`
+(`deletedAt`), у `BillingAccount` — email и страна. Журнал и `UsageEvent`
+ссылаются только на внутренние id и не правятся (инвариант 11); финансовые
+записи храним обезличенными столько, сколько требует закон; у MoR и
+RevenueCat — запрос на удаление через API.
+- Командный аккаунт при удалении участника не трогается: обезличивается
+только его `Identity`.
 - `ReferralClick` — только хэш посетителя.
 
 ---
@@ -1086,18 +1225,23 @@ BloggerDog, иначе сервис окажется производным от
 **v1 — всё, что нужно TyCo, и ничего больше.** Таблицы под будущие этапы
 заранее не создаём: схема без кода обычно оказывается неверной. С первого дня
 закладываем только то, что дорого менять потом: кошелёк по
-`(account, product)`, `productScope` у тарифа, `Offer` отдельно от версии,
-несколько подписок на аккаунт с `source`, USD-эквиваленты в `Payment`. Квоты,
-дополнения, бандлы, RevenueCat, комиссии и выплаты — миграциями на своих
-этапах.
+`(account, product)`, `productScope` у тарифа, `Offer` (с периодом) отдельно
+от версии, несколько подписок на аккаунт с `source`, USD-эквиваленты в
+`Payment`, возвраты отдельными записями, `Identity` и раздельные
+`accountId`/`actorId`, `BillingAccount.kind`, `Subscription.quantity`,
+нано-USD для себестоимости, ключи идемпотентности в пространстве продукта,
+UUIDv7. Квоты, дополнения, бандлы, акции, RevenueCat, командные аккаунты,
+комиссии и выплаты — миграциями на своих этапах.
 
 1. **Ядро.** Каркас монорепо из BloggerDog, `packages/core` с перенесёнными
- правилами и тестами, Prisma-схема: продукты, каталог, функции, кошельки,
- партии, журнал, резервы, права, лимиты. S2S API: права, holds, usage.
- Админка: продукт TyCo, тарифы, ручные кредиты, ручная таблица цен.
+ правилами и тестами, Prisma-схема: продукты, `Identity`, аккаунты, каталог,
+ функции, кошельки, партии, журнал, резервы, права, лимиты, служебные
+ таблицы (§16.4). S2S API: права, holds, usage. **Выбор IdP** — вход в
+ админку нужен уже здесь. Админка: продукт TyCo, тарифы, ручные кредиты,
+ ручная таблица цен.
 2. **Метеринг для TyCo.** Таблица цен для моделей TyCo, интеграция с
  AI-шлюзом на `ai-kit` (outbox commit, частичный commit), дашборд маржи.
-3. **Оплата и вход.** Выбор IdP, адаптер Polar, checkout, вебхуки, сверка,
+3. **Оплата и вход.** Вход пользователей через IdP, адаптер Polar, checkout, вебхуки, сверка,
  портал клиента. Бесплатный уровень. **Запуск TyCo.**
 4. **Рефералы v1 — конец MVP.** Награды кредитами и грантами тарифа, антифрод,
  холды, управление программой в админке, профиль реферера в портале. Без
@@ -1109,7 +1253,9 @@ BloggerDog, иначе сервис окажется производным от
 7. **Магазины.** RevenueCat как `PaymentSource`, конфликт источников.
 8. **BloggerDog.** Отдельный экземпляр; BloggerDog ещё не запущен, поэтому
  переноса боевых данных нет: переключаем его `ai-gateway` и checkout на S2S
- API и удаляем старый модуль биллинга из BloggerDog. Лицензионный договор.
+ API и удаляем старый модуль биллинга из BloggerDog. **Командные аккаунты**
+ (§5.3): создание `kind='team'`, места, цена за место, лимиты участника.
+ Адаптер Paddle, если выбран. Лицензионный договор.
 9. **Позже.** Денежные выплаты партнёрам, оплата диска по пику, внешние ссылки
  на оплату из мобильных приложений, `lifetime`.
 
@@ -1117,11 +1263,15 @@ BloggerDog, иначе сервис окажется производным от
 
 ## 24. Открытые вопросы
 
-1. Polar для `ivan-apps`: проверить условия для AI-продуктов и стран клиентов
- и может ли Polar meters закрыть часть учёта. Paddle для `bloggerdog` —
- решаем на этапе 8.
-2. Какой IdP: Zitadel, Logto, Keycloak, Ory (self-hosted или облако).
- Требования: OIDC + PKCE, loopback для Tauri, Google/Apple, magic link.
+1. Polar для `ivan-apps` — проверить **до этапа 3**: условия для AI-продуктов
+ и стран клиентов; несколько подписок на одного клиента (нужно для
+ дополнений); proration и событие при апгрейде (§8.3); региональные цены
+ (`Offer.region`); `quantity` у подписки (места, этап 8). Polar meters не
+ используем — резервов у них нет. Paddle для `bloggerdog` — решаем на
+ этапе 8.
+2. Какой IdP — **решить на этапе 1**: Zitadel, Logto, Keycloak, Ory
+ (self-hosted или облако). Требования: OIDC + PKCE, loopback для Tauri,
+ Google/Apple, magic link.
 3. Значения курса кредита и ступеней наценки для TyCo (вводятся в админке).
 4. Формулировки срока пакетов и невозвратности для ЕС — сверить с условиями
  Polar как продавца.
