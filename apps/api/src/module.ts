@@ -1,3 +1,5 @@
+import { StaffAccess } from "./staff.js";
+import { AdminController } from "./admin-controller.js";
 import { DevAccountController } from "./dev-account.js";
 import { Database } from "./database.js";
 import { WalletService } from "./wallet.js";
@@ -11,8 +13,9 @@ export class HealthController {
   }
 }
 @Module({
-  providers: [Database, WalletService],
+  providers: [Database, WalletService, StaffAccess],
   controllers: [
+    AdminController,
     HealthController,
     EstimateController,
     BillingController,

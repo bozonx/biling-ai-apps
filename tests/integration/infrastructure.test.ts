@@ -1,3 +1,5 @@
+import Fastify from "fastify";
+import { registerRateLimit } from "../../apps/api/src/rate-limit.js";
 import { PostgreSqlContainer } from "@testcontainers/postgresql";
 import { RedisContainer } from "@testcontainers/redis";
 import { PrismaPg } from "@prisma/adapter-pg";
@@ -86,6 +88,19 @@ test("migrations, Prisma round trip and Redis job processing", async () => {
         host: redis.getHost(),
         port: redis.getMappedPort(6379),
       };
+      const http = Fastify();
+      await registerRateLimit(http, connection);
+      http.get("/limited", async () => ({ ok: true }));
+      try {
+        for (let index = 0; index < 120; index++) {
+          expect((await http.inject({ url: "/limited" })).statusCode).toBe(200);
+        }
+        const blocked = await http.inject({ url: "/limited" });
+        expect(blocked.statusCode).toBe(429);
+        expect(blocked.json().code).toBe("RATE_LIMITED");
+      } finally {
+        await http.close();
+      }
       const queue = new Queue("billing-maintenance", { connection });
       let completed!: () => void;
       let failed!: (error: Error) => void;

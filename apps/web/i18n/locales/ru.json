@@ -101,5 +101,63 @@
     "COPY_FAILED": "Не удалось скопировать",
     "pageNotFound": "Страница не найдена",
     "pageNotFoundDescription": "Возможно, ссылка устарела или адрес введён с ошибкой."
+  },
+  "admin": {
+    "title": "Администрирование",
+    "token": "Токен staff",
+    "tokenHint": "Токен хранится только в памяти страницы. Нужны IdentityBinding и StaffRole.",
+    "load": "Загрузить",
+    "disconnect": "Выйти",
+    "action": "Действие",
+    "save": "Выполнить",
+    "failed": "Не удалось выполнить запрос. Проверьте права и поля формы.",
+    "secret": "Сохраните ключ: он показан только один раз",
+    "actions": {
+      "product": "Продукт",
+      "feature": "Функция",
+      "rate": "Курс кредита",
+      "plan": "Тариф",
+      "version": "Версия тарифа",
+      "key": "Выпуск ключа",
+      "revokeKey": "Отзыв ключа",
+      "credits": "Ручное начисление",
+      "price": "Цена функции"
+    },
+    "fields": {
+      "code": "Код",
+      "name": "Название",
+      "productId": "ID продукта",
+      "key": "Ключ функции",
+      "pricing": "Цена: fixed / metered",
+      "version": "Номер версии",
+      "creditValueMicros": "Стоимость кредита, микро USD",
+      "productScope": "Коды продуктов через запятую",
+      "kind": "Тип: base / addon",
+      "planId": "ID тарифа",
+      "creditGrants": "Кредиты по продуктам (JSON)",
+      "entitlements": "Права по продуктам (JSON)",
+      "creditGrantInterval": "Интервал: day / week / month / year",
+      "creditGrantIntervalCount": "Число интервалов",
+      "scopes": "Права ключа через запятую",
+      "id": "ID",
+      "accountId": "ID аккаунта",
+      "amountMilli": "Милли-кредиты",
+      "creditRateVersionId": "ID версии курса",
+      "featureId": "ID функции",
+      "creditsMilli": "Милли-кредиты",
+      "unit": "Единица",
+      "per": "Количество единиц",
+      "status": "Статус",
+      "prefix": "Префикс"
+    },
+    "sections": {
+      "products": "Продукты",
+      "features": "Функции",
+      "rates": "Курсы",
+      "plans": "Тарифы",
+      "versions": "Версии",
+      "keys": "API-ключи",
+      "prices": "Цены функций"
+    }
   }
 }

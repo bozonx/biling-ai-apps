@@ -187,6 +187,7 @@ export class WalletService {
       amountMilli: string;
       creditRateVersionId: string;
     },
+    actorIdentityId?: string,
   ) {
     return this.db.$transaction(async (tx) => {
       await this.lock(tx, input.accountId, productId);
@@ -262,6 +263,20 @@ export class WalletService {
           version: { increment: 1 },
         },
       });
+      if (actorIdentityId)
+        await tx.adminAuditLog.create({
+          data: {
+            actorIdentityId,
+            action: "credits.grant",
+            targetType: "CreditOperation",
+            targetId: operation.id,
+            after: {
+              accountId: input.accountId,
+              productId,
+              amountMilli: input.amountMilli,
+            },
+          },
+        });
       return operation;
     });
   }

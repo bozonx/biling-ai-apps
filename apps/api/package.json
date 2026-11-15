@@ -21,7 +21,10 @@
     "rxjs": "catalog:",
     "@billing/contracts": "workspace:*",
     "zod": "catalog:",
-    "@billing/core": "workspace:*"
+    "@billing/core": "workspace:*",
+    "jose": "catalog:",
+    "pino": "catalog:",
+    "@fastify/rate-limit": "catalog:"
   },
   "type": "module"
 }

@@ -2,6 +2,9 @@ packages:
   - apps/*
   - packages/*
 catalog:
+  jose: "6.2.17"
+  pino: "10.4.0"
+  "@fastify/rate-limit": "11.2.2"
   "@eslint/js": "10.0.1"
   "@fastify/helmet": "13.2.0"
   "@nestjs/bullmq": "12.0.2"

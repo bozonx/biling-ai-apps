@@ -101,5 +101,63 @@
     "COPY_FAILED": "Could not copy",
     "pageNotFound": "Page not found",
     "pageNotFoundDescription": "The link may be outdated or the address mistyped."
+  },
+  "admin": {
+    "title": "Administration",
+    "token": "Staff access token",
+    "tokenHint": "The token stays in page memory. IdentityBinding and StaffRole are required.",
+    "load": "Load",
+    "disconnect": "Disconnect",
+    "action": "Action",
+    "save": "Submit",
+    "failed": "Request failed. Check permissions and form fields.",
+    "secret": "Save this key: it is shown only once",
+    "actions": {
+      "product": "Create product",
+      "feature": "Create feature",
+      "rate": "Publish credit rate",
+      "plan": "Create plan",
+      "version": "Publish plan version",
+      "key": "Issue API key",
+      "revokeKey": "Revoke API key",
+      "credits": "Grant credits",
+      "price": "Feature price"
+    },
+    "fields": {
+      "code": "Code",
+      "name": "Name",
+      "productId": "Product ID",
+      "key": "Feature key",
+      "pricing": "Pricing: fixed / metered",
+      "version": "Version number",
+      "creditValueMicros": "Credit value, micro USD",
+      "productScope": "Product codes, comma separated",
+      "kind": "Kind: base / addon",
+      "planId": "Plan ID",
+      "creditGrants": "Credits by product (JSON)",
+      "entitlements": "Entitlements by product (JSON)",
+      "creditGrantInterval": "Interval: day / week / month / year",
+      "creditGrantIntervalCount": "Interval count",
+      "scopes": "Key scopes, comma separated",
+      "id": "ID",
+      "accountId": "Account ID",
+      "amountMilli": "Milli-credits",
+      "creditRateVersionId": "Credit rate version ID",
+      "featureId": "Feature ID",
+      "creditsMilli": "Milli-credits",
+      "unit": "Unit",
+      "per": "Units per price",
+      "status": "Status",
+      "prefix": "Prefix"
+    },
+    "sections": {
+      "products": "Products",
+      "features": "Features",
+      "rates": "Rates",
+      "plans": "Plans",
+      "versions": "Versions",
+      "keys": "Keys",
+      "prices": "Feature prices"
+    }
   }
 }

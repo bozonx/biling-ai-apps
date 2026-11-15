@@ -48,7 +48,9 @@
     "tsx": "catalog:",
     "turbo": "catalog:",
     "typescript": "catalog:",
-    "typescript-eslint": "catalog:"
+    "typescript-eslint": "catalog:",
+    "jose": "catalog:",
+    "fastify": "catalog:"
   },
   "type": "module"
 }

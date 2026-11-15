@@ -1,3 +1,5 @@
+import { AdminController } from "../../apps/api/src/admin-controller.js";
+import type { StaffAccess } from "../../apps/api/src/staff.js";
 import { PostgreSqlContainer } from "@testcontainers/postgresql";
 import { execFileSync } from "node:child_process";
 import { Database } from "../../apps/api/src/database.js";
@@ -268,6 +270,87 @@ test("wallet transactions serialize reservations and preserve an append-only led
     expect(accrued.expiresAt!.getTime()).toBeGreaterThan(Date.now());
     expect(balances[0]!.nextAccrualAt).toEqual(accrued.expiresAt);
     expect(balances[0]!.nextExpiryAt).toEqual(accrued.expiresAt);
+    const subscriptionVersion = await db.planVersion.findFirstOrThrow({
+      where: { planId: plan.id, version: 2 },
+    });
+    const periodStart = new Date();
+    const periodEnd = new Date(periodStart.getTime() + 365 * 86400000);
+    const subscription = await db.subscription.create({
+      data: {
+        accountId: account.id,
+        planVersionId: subscriptionVersion.id,
+        source: "manual",
+        externalSubscriptionId: "paid-test",
+        status: "active",
+        currentPeriodStart: periodStart,
+        currentPeriodEnd: periodEnd,
+        quantity: 2,
+      },
+    });
+    expect((await service.balance(account.id, product.id)).balanceMilli).toBe(
+      300n,
+    );
+    await db.payment.create({
+      data: {
+        accountId: account.id,
+        subscriptionId: subscription.id,
+        planVersionId: subscriptionVersion.id,
+        source: "manual",
+        externalId: "paid-test",
+        kind: "subscription_initial",
+        status: "succeeded",
+        periodStart,
+        periodEnd,
+        currency: "USD",
+        grossMicros: 1000000n,
+        netMicros: 1000000n,
+        grossUsdMicros: 1000000n,
+        netUsdMicros: 1000000n,
+        fxRate: "1",
+        fxSource: "manual",
+        occurredAt: periodStart,
+      },
+    });
+    expect((await service.balance(account.id, product.id)).balanceMilli).toBe(
+      1300n,
+    );
+    expect((await service.balance(account.id, product.id)).balanceMilli).toBe(
+      1300n,
+    );
+    expect(
+      await db.creditBucket.count({ where: { sourceType: "subscription" } }),
+    ).toBe(1);
+    await db.subscription.update({
+      where: { id: subscription.id },
+      data: { status: "past_due" },
+    });
+    expect((await service.balance(account.id, product.id)).balanceMilli).toBe(
+      1300n,
+    );
+    const admin = new AdminController(db, service, {
+      authorize: async () => identity.id,
+    } as unknown as StaffAccess);
+    const issued = await admin.change("Bearer test", {
+      action: "key",
+      productId: product.id,
+      name: "integration",
+      scopes: ["wallets:read"],
+    });
+    expect(issued.secret).toMatch(/^bill_/);
+    const stored = await db.productApiKey.findUniqueOrThrow({
+      where: { id: issued.id },
+    });
+    expect(stored.keyHash).not.toBe(issued.secret);
+    expect(JSON.stringify(await admin.catalog("Bearer test"))).not.toContain(
+      stored.keyHash,
+    );
+    await admin.change("Bearer test", { action: "revokeKey", id: issued.id });
+    expect(
+      await db.productApiKey.findUnique({ where: { id: issued.id } }),
+    ).toMatchObject({ status: "revoked" });
+    expect(
+      await db.adminAuditLog.count({ where: { actorIdentityId: identity.id } }),
+    ).toBe(2);
   } finally {
     await db.$disconnect();
     if (previous === undefined) delete process.env.DATABASE_URL;

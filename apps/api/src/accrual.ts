@@ -48,8 +48,53 @@ export async function accrueGrants(
     },
     include: { planVersion: { include: { plan: true } } },
   });
+  const subscriptions = await tx.subscription.findMany({
+    where: {
+      accountId,
+      status: "active",
+      endedAt: null,
+      currentPeriodStart: { lte: now },
+      currentPeriodEnd: { gt: now },
+    },
+    include: {
+      planVersion: { include: { plan: true } },
+      payments: {
+        where: { status: "succeeded", refundedMicros: 0n },
+      },
+    },
+  });
+  const sources = [
+    ...grants.map((grant) => ({
+      ...grant,
+      sourceType: "plan_grant" as const,
+      keyPrefix: "grant",
+      quantity: 1,
+    })),
+    ...subscriptions
+      .filter((subscription) =>
+        subscription.payments.some(
+          (payment) =>
+            payment.accountId === accountId &&
+            payment.planVersionId === subscription.planVersionId &&
+            payment.periodStart &&
+            payment.periodStart <= subscription.currentPeriodStart &&
+            payment.periodEnd &&
+            payment.periodEnd >= subscription.currentPeriodEnd,
+        ),
+      )
+      .map((subscription) => ({
+        id: subscription.id,
+        planVersion: subscription.planVersion,
+        planId: null,
+        startsAt: subscription.currentPeriodStart,
+        endsAt: subscription.currentPeriodEnd,
+        sourceType: "subscription" as const,
+        keyPrefix: "sub",
+        quantity: subscription.quantity,
+      })),
+  ];
   let nextAccrualAt: Date | null = null;
-  for (const grant of grants) {
+  for (const grant of sources) {
     const version =
       grant.planVersion ??
       (grant.planId
@@ -120,10 +165,11 @@ export async function accrueGrants(
       throw new ConflictException({ code: "INVALID_ACCRUAL_CONFIGURATION" });
     const amount =
       (BigInt(value as string | number) *
+        BigInt(grant.quantity) *
         BigInt(end.getTime() - start.getTime())) /
       BigInt(fullEnd.getTime() - start.getTime());
     if (amount === 0n) continue;
-    const operationKey = `accrual:grant:${grant.id}:${start.toISOString()}:${version.id}`;
+    const operationKey = `accrual:${grant.keyPrefix}:${grant.id}:${start.toISOString()}:${version.id}`;
     if (
       await tx.creditOperation.findUnique({
         where: { productId_operationKey: { productId, operationKey } },
@@ -166,7 +212,7 @@ export async function accrueGrants(
         remainingMilli: available,
         expiresAt: end,
         creditRateVersionId: rate.id,
-        sourceType: "plan_grant",
+        sourceType: grant.sourceType,
         sourceId: grant.id,
         periodStart: start,
         operationId: operation.id,

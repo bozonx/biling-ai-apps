@@ -1,3 +1,4 @@
+import { logger, nestLogger } from "./logging.js";
 import "reflect-metadata";
 import "dotenv/config";
 import { config } from "./config.js";
@@ -21,7 +22,8 @@ class HoldExpiryWorker implements OnApplicationBootstrap, OnModuleDestroy {
     this.close = await startMaintenanceQueue(
       { host: config.REDIS_HOST, port: config.REDIS_PORT },
       () => this.wallets.expireHolds(),
-      (error) => console.error(error),
+      (error) =>
+        logger.error({ errorType: error.name }, "Maintenance job failed"),
     );
   }
   async onModuleDestroy() {
@@ -30,9 +32,12 @@ class HoldExpiryWorker implements OnApplicationBootstrap, OnModuleDestroy {
 }
 @Module({ providers: [Database, WalletService, HoldExpiryWorker] })
 class WorkerModule {}
-NestFactory.createApplicationContext(WorkerModule)
+NestFactory.createApplicationContext(WorkerModule, { logger: nestLogger })
   .then((app) => app.enableShutdownHooks())
   .catch((error: unknown) => {
-    console.error(error);
+    logger.error(
+      { errorType: error instanceof Error ? error.name : "Unknown" },
+      "Worker startup failed",
+    );
     process.exit(1);
   });
