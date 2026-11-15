@@ -59,6 +59,10 @@ test("wallet transactions serialize reservations and preserve an append-only led
     });
     await service.expireHolds();
     expect((await service.balance(account.id, product.id)).heldMilli).toBe(0n);
+    expect(
+      await db.creditHold.findUnique({ where: { id: expiring.id } }),
+    ).toMatchObject({ status: "expired" });
+    await service.expireHolds();
     expect(await service.history(account.id, product.id)).toHaveLength(1);
     const results = await Promise.allSettled(
       ["a", "b"].map((key) =>
@@ -85,10 +89,70 @@ test("wallet transactions serialize reservations and preserve an append-only led
       heldMilli: 0n,
     });
     expect(await db.creditLedgerEntry.count()).toBe(2);
+    expect(await db.usageEvent.count()).toBe(1);
+    expect(await db.usageEventKey.count()).toBe(1);
+    const usage = await db.usageEvent.findFirstOrThrow();
+    expect(usage.creditsChargedMilli).toBe(700n);
+    expect(
+      await db.creditLedgerEntry.findFirst({
+        where: { reason: "consumption" },
+      }),
+    ).toMatchObject({ usageEventId: usage.id });
+
     expect(
       (await db.creditLedgerEntry.aggregate({ _sum: { amountMilli: true } }))
         ._sum.amountMilli,
     ).toBe(300n);
+    await db.productEntitlementKey.create({
+      data: {
+        productId: product.id,
+        key: "ai.enabled",
+        type: "bool",
+        merge: "or",
+        enumValues: [],
+      },
+    });
+    await db.productFeature.update({
+      where: { id: feature.id },
+      data: { requires: { "ai.enabled": true } },
+    });
+    await expect(
+      service.reserve(product.id, "denied", {
+        accountId: account.id,
+        featureId: feature.id,
+        amountMilli: "100",
+      }),
+    ).rejects.toThrow();
+    const plan = await db.plan.create({
+      data: {
+        code: "entitlement-test",
+        name: "Test",
+        kind: "base",
+        productScope: [product.code],
+      },
+    });
+    await db.planVersion.create({
+      data: {
+        planId: plan.id,
+        version: 1,
+        effectiveFrom: new Date(),
+        publishedAt: new Date(),
+        entitlements: { [product.code]: { "ai.enabled": true } },
+      },
+    });
+    await db.planGrant.create({
+      data: {
+        accountId: account.id,
+        productId: product.id,
+        planId: plan.id,
+        source: "default",
+        startsAt: new Date(),
+        idempotencyKey: "test-grant",
+      },
+    });
+    expect(await service.entitlements(account.id, product.id)).toEqual({
+      "ai.enabled": true,
+    });
     const released = await service.reserve(product.id, "release", {
       accountId: account.id,
       featureId: feature.id,

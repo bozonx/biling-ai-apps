@@ -1,3 +1,5 @@
+import { effectiveEntitlements } from "./entitlements.js";
+import { satisfiesEntitlements } from "@billing/core";
 import {
   ConflictException,
   HttpException,
@@ -55,6 +57,14 @@ export class WalletService {
     );
   }
 
+  async entitlements(accountId: string, productId: string) {
+    return this.db.$transaction(
+      async (tx) =>
+        (await effectiveEntitlements(tx, accountId, productId)).values,
+      { isolationLevel: "RepeatableRead" },
+    );
+  }
+
   async expireHolds() {
     const holds = await this.db.creditHold.findMany({
       where: { status: "open", expiresAt: { lte: new Date() } },
@@ -62,11 +72,23 @@ export class WalletService {
     });
     for (const hold of holds) {
       try {
-        await this.close(hold.productId, hold.id, "release");
+        await this.close(hold.productId, hold.id, "expire");
       } catch (error) {
         Logger.error(error, undefined, "HoldExpiry");
       }
     }
+  }
+
+  async usage(accountId: string, productId: string, before?: string) {
+    return this.db.usageEvent.findMany({
+      where: {
+        accountId,
+        productId,
+        ...(before ? { id: { lt: before } } : {}),
+      },
+      orderBy: { id: "desc" },
+      take: 50,
+    });
   }
 
   async history(accountId: string, productId: string, before?: string) {
@@ -204,9 +226,19 @@ export class WalletService {
       });
       if (!feature)
         throw new ConflictException({ code: "FEATURE_UNAVAILABLE" });
-      // Entitlement-bearing features are denied until entitlement resolution is implemented.
-      if (Object.keys(feature.requires as object).length)
-        fail("ENTITLEMENTS_REQUIRED");
+      const entitlements = await effectiveEntitlements(
+        tx,
+        input.accountId,
+        productId,
+      );
+      if (
+        !satisfiesEntitlements(
+          entitlements.definitions,
+          entitlements.values,
+          feature.requires as Record<string, unknown>,
+        )
+      )
+        throw new HttpException({ code: "ENTITLEMENT_DENIED" }, 403);
       const account = await tx.billingAccount.findUniqueOrThrow({
         where: { id: input.accountId },
       });
@@ -236,7 +268,11 @@ export class WalletService {
     });
   }
 
-  async close(productId: string, holdId: string, action: "commit" | "release") {
+  async close(
+    productId: string,
+    holdId: string,
+    action: "commit" | "release" | "expire",
+  ) {
     return this.db.$transaction(async (tx) => {
       const initial = await tx.creditHold.findFirst({
         where: { id: holdId, productId },
@@ -246,7 +282,17 @@ export class WalletService {
       const hold = await tx.creditHold.findUniqueOrThrow({
         where: { id: holdId },
       });
-      const status = action === "commit" ? "committed" : "released";
+      const status =
+        action === "commit"
+          ? "committed"
+          : action === "expire"
+            ? "expired"
+            : "released";
+      if (
+        action === "expire" &&
+        (hold.status !== "open" || hold.expiresAt > new Date())
+      )
+        return hold;
       if (hold.status === status) return hold;
       if (hold.status !== "open") fail("HOLD_CLOSED");
       if (action === "commit" && hold.expiresAt <= new Date())
@@ -258,7 +304,7 @@ export class WalletService {
         const allocations = allocateCredits(
           buckets,
           hold.amountMilli,
-          new Date(),
+          hold.createdAt,
         );
         const operation = await tx.creditOperation.create({
           data: {
@@ -269,6 +315,27 @@ export class WalletService {
             walletSeq: wallet.lastOperationSeq + 1n,
             balanceAfterMilli: wallet.balanceMilli - hold.amountMilli,
             debtAfterMilli: wallet.debtMilli,
+          },
+        });
+        const usage = await tx.usageEvent.create({
+          data: {
+            accountId: hold.accountId,
+            productId,
+            featureId: hold.featureId!,
+            holdId,
+            operationId: operation.id,
+            costSource: "unknown",
+            status: "ok",
+            creditsChargedMilli: hold.amountMilli,
+            idempotencyKey: `commit:${hold.id}`,
+            occurredAt: new Date(),
+          },
+        });
+        await tx.usageEventKey.create({
+          data: {
+            productId,
+            idempotencyKey: usage.idempotencyKey,
+            usageEventId: usage.id,
           },
         });
         for (const allocation of allocations) {
@@ -284,6 +351,7 @@ export class WalletService {
               bucketId: allocation.bucketId,
               amountMilli: -allocation.amountMilli,
               reason: "consumption",
+              usageEventId: usage.id,
               holdId,
             },
           });

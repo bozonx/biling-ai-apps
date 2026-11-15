@@ -22,7 +22,9 @@ test("S2S rejects missing keys and scopes and derives product exclusively from t
     };
   };
   const controller = new BillingController(
-    { productApiKey: { findUnique: lookup } } as unknown as Database,
+    {
+      productApiKey: { findUnique: lookup, update: async () => ({}) },
+    } as unknown as Database,
     { balance } as unknown as WalletService,
   );
   const accountId = "019a85e0-1111-7111-8111-111111111111";

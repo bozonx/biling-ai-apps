@@ -15,10 +15,11 @@ export function estimateCredits(
 export interface SpendBucket {
   id: string;
   remainingMilli: bigint;
+  kind?: "plan" | "trial" | "promo" | "referral" | "compensation" | "pack";
   expiresAt: Date | null;
 }
 
-/** Consume expiring buckets first; equal expiry is ordered by stable bucket id. */
+/** Consume earliest expiry first, then source priority and stable bucket id. */
 export function allocateCredits(
   buckets: readonly SpendBucket[],
   amountMilli: bigint,
@@ -36,7 +37,18 @@ export function allocateCredits(
     .sort((a, b) => {
       const left = a.expiresAt?.getTime() ?? Infinity;
       const right = b.expiresAt?.getTime() ?? Infinity;
-      return left === right ? a.id.localeCompare(b.id) : left < right ? -1 : 1;
+      if (left !== right) return left < right ? -1 : 1;
+      const priority = [
+        "plan",
+        "trial",
+        "promo",
+        "referral",
+        "compensation",
+        "pack",
+      ];
+      const rank = (kind: SpendBucket["kind"]) =>
+        kind ? priority.indexOf(kind) : priority.length;
+      return rank(a.kind) - rank(b.kind) || a.id.localeCompare(b.id);
     });
   let remaining = amountMilli;
   const allocations: { bucketId: string; amountMilli: bigint }[] = [];

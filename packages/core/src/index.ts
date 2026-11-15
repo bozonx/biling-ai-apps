@@ -5,3 +5,8 @@ export function displayCredits(milliCredits: bigint): bigint {
 }
 export { ceilDivide, estimateCredits, allocateCredits } from "./billing.js";
 export type { SpendBucket } from "./billing.js";
+export { resolveEntitlements, satisfiesEntitlements } from "./entitlements.js";
+export type {
+  EntitlementDefinition,
+  EntitlementValue,
+} from "./entitlements.js";

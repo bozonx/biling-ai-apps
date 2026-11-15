@@ -71,6 +71,34 @@ export class BillingController {
   private key(value: unknown) {
     return parse(z.string().min(1).max(200), value);
   }
+  @Get("entitlements/:accountId")
+  async entitlements(
+    @Headers("authorization") auth: string | undefined,
+    @Param("accountId") accountId: string,
+  ) {
+    const productId = await this.authorize(auth, "entitlements:read");
+    return {
+      entitlements: await this.wallets.entitlements(
+        parse(z.uuid(), accountId),
+        productId,
+      ),
+    };
+  }
+  @Get("usage/:accountId")
+  async usage(
+    @Headers("authorization") auth: string | undefined,
+    @Param("accountId") accountId: string,
+    @Query("before") before?: string,
+  ) {
+    const productId = await this.authorize(auth, "usage:read");
+    return json(
+      await this.wallets.usage(
+        parse(z.uuid(), accountId),
+        productId,
+        before === undefined ? undefined : parse(z.uuid(), before),
+      ),
+    );
+  }
   @Get("wallets/:accountId")
   async balance(
     @Headers("authorization") auth: string | undefined,

@@ -27,3 +27,16 @@ test("allocates earliest expiry first and excludes expired credits without mutat
   );
   expect(() => allocateCredits(buckets, 0n, now)).toThrow();
 });
+
+test("equal expiry follows billing source priority", () => {
+  expect(
+    allocateCredits(
+      [
+        { id: "a", kind: "pack", remainingMilli: 100n, expiresAt: null },
+        { id: "z", kind: "plan", remainingMilli: 100n, expiresAt: null },
+      ],
+      50n,
+      now,
+    ),
+  ).toEqual([{ bucketId: "z", amountMilli: 50n }]);
+});
