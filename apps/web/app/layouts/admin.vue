@@ -182,6 +182,17 @@ const userMenuItems = computed(() => [
                 />
               </UButton>
             </UDropdownMenu>
+
+            <UButton
+              color="neutral"
+              variant="ghost"
+              size="sm"
+              icon="i-lucide-log-out"
+              :aria-label="t('admin.disconnect')"
+              @click="admin.disconnect"
+            >
+              <span class="hidden sm:inline">{{ t("admin.disconnect") }}</span>
+            </UButton>
           </div>
         </div>
       </header>
@@ -237,6 +248,21 @@ const userMenuItems = computed(() => [
                 </UBadge>
               </NuxtLink>
             </div>
+          </div>
+
+          <div class="pt-2 border-t border-default space-y-0.5">
+            <NuxtLink
+              to="/admin/settings"
+              class="flex items-center gap-2 px-2.5 py-1.5 text-sm rounded-md transition-colors"
+              :class="
+                isAdminNavActive(route.path, '/admin/settings')
+                  ? 'bg-muted text-default font-medium'
+                  : 'text-muted hover:bg-muted/50 hover:text-default'
+              "
+            >
+              <UIcon name="i-lucide-settings" class="size-4 shrink-0" />
+              <span class="truncate">{{ t("admin.nav.settings") }}</span>
+            </NuxtLink>
           </div>
         </nav>
       </aside>

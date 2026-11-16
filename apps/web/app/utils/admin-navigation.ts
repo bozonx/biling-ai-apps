@@ -33,12 +33,6 @@ export const ADMIN_NAVIGATION: AdminNavGroup[] = [
         icon: "i-lucide-layers",
         sectionKey: "plans",
       },
-      {
-        labelKey: "admin.nav.pricing",
-        to: "/admin/pricing",
-        icon: "i-lucide-tag",
-        sectionKey: "features",
-      },
     ],
   },
   {
@@ -51,24 +45,12 @@ export const ADMIN_NAVIGATION: AdminNavGroup[] = [
         icon: "i-lucide-git-branch",
         sectionKey: "routes",
       },
-      {
-        labelKey: "admin.nav.margins",
-        to: "/admin/margins",
-        icon: "i-lucide-trending-up",
-        sectionKey: "margin",
-      },
     ],
   },
   {
     labelKey: "admin.nav.groups.operations",
     icon: "i-lucide-wrench",
     items: [
-      {
-        labelKey: "admin.nav.keys",
-        to: "/admin/keys",
-        icon: "i-lucide-key",
-        sectionKey: "keys",
-      },
       {
         labelKey: "admin.nav.tasks",
         to: "/admin/tasks",
@@ -102,6 +84,24 @@ export function findAdminNavItem(path: string): {
       },
     };
   }
+
+  // Scoped subpages map to Products group item
+  if (
+    path.startsWith("/admin/pricing") ||
+    path.startsWith("/admin/margins") ||
+    path.startsWith("/admin/keys")
+  ) {
+    const catalogGroup = ADMIN_NAVIGATION.find(
+      (g) => g.labelKey === "admin.nav.groups.catalog",
+    );
+    const productsItem = catalogGroup?.items.find(
+      (i) => i.to === "/admin/products",
+    );
+    if (catalogGroup && productsItem) {
+      return { group: catalogGroup, item: productsItem };
+    }
+  }
+
   for (const group of ADMIN_NAVIGATION) {
     for (const item of group.items) {
       if (item.to === "/admin" ? path === "/admin" : path.startsWith(item.to)) {
@@ -118,6 +118,15 @@ export function isAdminNavActive(
 ): boolean {
   if (targetPath === "/admin") {
     return currentPath === "/admin" || currentPath === "/admin/";
+  }
+  if (targetPath === "/admin/products") {
+    return (
+      currentPath === "/admin/products" ||
+      currentPath.startsWith("/admin/products/") ||
+      currentPath.startsWith("/admin/pricing") ||
+      currentPath.startsWith("/admin/margins") ||
+      currentPath.startsWith("/admin/keys")
+    );
   }
   return currentPath === targetPath || currentPath.startsWith(`${targetPath}/`);
 }

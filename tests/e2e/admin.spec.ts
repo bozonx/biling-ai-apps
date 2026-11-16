@@ -97,8 +97,15 @@ test("persists staff session on reload and supports sidebar navigation with sett
   ).toBeVisible();
 
   // Sidebar navigation to separate pages
-  await page.getByRole("link", { name: "Цены и функции" }).click();
-  await expect(page).toHaveURL(/\/admin\/pricing$/);
+  await page.getByRole("link", { name: "Продукты" }).click();
+  await expect(page).toHaveURL(/\/admin\/products$/);
+  await expect(
+    page.getByRole("cell", { name: "TyCo Product", exact: true }),
+  ).toBeVisible();
+
+  // Open product detail and check scoped feature
+  await page.getByRole("link", { name: "TyCo Product" }).click();
+  await page.getByRole("button", { name: "Функции и цены" }).click();
   await expect(
     page.getByRole("cell", { name: "chat", exact: true }),
   ).toBeVisible();

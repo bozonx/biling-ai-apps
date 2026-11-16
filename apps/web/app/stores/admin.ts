@@ -292,6 +292,7 @@ export const useAdminStore = defineStore("admin", () => {
     signInWithToken,
     signInDev,
     disconnect,
+    signOut: disconnect,
     executeAction,
     updateEntity,
     deleteEntity,
