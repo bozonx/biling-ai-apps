@@ -230,6 +230,12 @@
         "mt": "MT (Machine translation)",
         "embed": "Embeddings"
       },
+      "routeVariant": {
+        "standard": "Standard",
+        "reasoning": "Reasoning (Thinking)",
+        "batch": "Batch (Discounted)",
+        "flex": "Flex Queue"
+      },
       "featurePricing": {
         "fixed": "Fixed",
         "metered": "Metered"
@@ -349,8 +355,51 @@
     "keys": {
       "info": "Manage system and customer API keys. Issue scoped access tokens bound to products with instant revocation capability."
     },
+    "popularModels": "Popular models",
     "routes": {
-      "info": "AI provider routing configuration. Maps external models to specific upstream providers, fallback routes, and cost price tables."
+      "info": "AI provider routing configuration. Maps external models to specific upstream providers, fallback routes, and cost price tables.",
+      "createRoute": "Create route",
+      "statsTotal": "Total routes",
+      "statsProviders": "AI providers",
+      "statsPriced": "With cost rates",
+      "allKinds": "All kinds",
+      "allProviders": "All providers",
+      "searchPlaceholder": "Search by model, provider...",
+      "colModel": "Model / Provider",
+      "colCostRate": "Cost rate",
+      "colProducts": "Products",
+      "openDetails": "Open route details",
+      "costRateSectionDesc": "Versioned provider cost rates. The latest published version with an effective date takes effect.",
+      "addPriceVersion": "Add cost rate",
+      "activeRate": "Active rate",
+      "effectiveFrom": "Effective from",
+      "rateItems": "Rate items",
+      "noPricesConfigured": "Cost rate not configured yet. Add the first price version.",
+      "published": "Published",
+      "draft": "Draft",
+      "publishNow": "Publish",
+      "notConfigured": "Not configured",
+      "productsSectionDesc": "Ecosystem products authorized to access this route through the AI gateway.",
+      "assignProduct": "Assign product",
+      "assignProductTitle": "Assign route to product",
+      "enableForProductDesc": "Allow gateway to route requests from this product to this model",
+      "allProductsAssigned": "Route is already assigned to all existing products",
+      "noProductsAssigned": "Not assigned to any product",
+      "removeProduct": "Remove from product",
+      "createPriceVersionTitle": "New cost rate version",
+      "llmPricingTitle": "Token pricing (LLM)",
+      "audioPricingTitle": "Audio pricing (STT / TTS)",
+      "mediaPricingTitle": "Media / Request pricing",
+      "inputPer1M": "Input tokens ($ per 1M)",
+      "outputPer1M": "Output tokens ($ per 1M)",
+      "audioPerMin": "Audio cost ($ per minute)",
+      "costPerUnit": "Cost per unit ($)",
+      "publishImmediately": "Publish immediately",
+      "publishImmediatelyDesc": "The new rate will become active immediately upon reaching the effective date",
+      "errors": {
+        "atLeastOnePriceRequired": "Specify at least one pricing position",
+        "selectProduct": "Please select a product"
+      }
     },
     "tasks": {
       "info": "Log of background billing and reconciliation tasks: recurring accruals, balance reconciliations, and payment gateway syncs."

@@ -1,5 +1,5 @@
 export const adminActionDefinitions: Record<string, string[]> = {
-  route: ["provider", "model", "variant", "kind"],
+  route: ["kind", "provider", "model", "variant"],
   productRoute: ["productId", "routeId"],
   markup: ["productId", "version", "tiers", "minChargeMilli", "effectiveFrom"],
   limitPolicy: ["productId", "window", "meter", "max"],
@@ -89,7 +89,7 @@ export const adminEditFieldDefinitions: Record<string, string[]> = {
   product: ["name", "status"],
   plan: ["name", "kind", "productScope"],
   feature: ["pricing", "status"],
-  route: ["provider", "model", "variant", "kind"],
+  route: ["kind", "provider", "model", "variant"],
   productRoute: ["isActive"],
   key: ["name", "scopes"],
   price: ["creditsMilli", "unit", "per"],

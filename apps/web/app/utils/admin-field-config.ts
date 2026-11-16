@@ -25,6 +25,7 @@ export interface AdminFieldConfig {
 export const ADMIN_ENUM_OPTIONS: Record<string, string[]> = {
   status: ["active", "disabled"],
   routeKind: ["llm", "stt", "tts", "image", "video", "mt", "embed"],
+  routeVariant: ["standard", "reasoning", "batch", "flex"],
   featurePricing: ["fixed", "metered"],
   planKind: ["base", "addon"],
   limitWindow: ["minute", "hour", "day", "month"],
@@ -38,6 +39,54 @@ export const ADMIN_ENUM_OPTIONS: Record<string, string[]> = {
     "holds:write",
     "credits:grant",
   ],
+};
+
+export const ROUTE_PROVIDERS_BY_KIND: Record<string, string[]> = {
+  llm: ["openai", "anthropic", "google", "openrouter", "groq"],
+  stt: ["groq", "deepgram", "openai"],
+  tts: ["openai", "elevenlabs", "deepgram"],
+  image: ["openai", "google"],
+  video: ["google", "openai"],
+  mt: ["google", "deepl"],
+  embed: ["openai", "google", "cohere"],
+};
+
+export const ALL_ROUTE_PROVIDERS = [
+  "openai",
+  "anthropic",
+  "google",
+  "openrouter",
+  "groq",
+  "deepgram",
+  "elevenlabs",
+  "mistral",
+  "cohere",
+];
+
+export const POPULAR_MODELS_BY_PROVIDER: Record<string, string[]> = {
+  openai: ["gpt-4o", "gpt-4o-mini", "o3-mini", "o1", "text-embedding-3-small"],
+  anthropic: [
+    "claude-3-7-sonnet",
+    "claude-3-5-sonnet",
+    "claude-3-5-haiku",
+    "claude-3-opus",
+  ],
+  google: [
+    "gemini-2.5-pro",
+    "gemini-2.5-flash",
+    "gemini-1.5-pro",
+    "gemini-1.5-flash",
+    "text-embedding-004",
+  ],
+  openrouter: [
+    "auto",
+    "anthropic/claude-3.5-sonnet",
+    "openai/gpt-4o",
+    "deepseek/deepseek-r1",
+  ],
+  groq: ["whisper-large-v3", "llama-3.3-70b-versatile", "llama-3.1-8b-instant"],
+  deepgram: ["nova-2", "aura"],
+  elevenlabs: ["eleven_multilingual_v2", "eleven_turbo_v2_5"],
 };
 
 export const JSON_TEMPLATES: Record<string, object> = {
@@ -318,12 +367,53 @@ export function getFieldConfig(
     };
   }
 
-  // 5. Enums
+  // 5. Enums and Selects for route
   if (action === "route" && field === "kind") {
     return {
       control: "select",
       enumKey: "routeKind",
       options: ADMIN_ENUM_OPTIONS.routeKind,
+    };
+  }
+
+  if (action === "route" && field === "variant") {
+    return {
+      control: "select",
+      enumKey: "routeVariant",
+      options: ADMIN_ENUM_OPTIONS.routeVariant,
+    };
+  }
+
+  if (action === "route" && field === "provider") {
+    return {
+      control: "select",
+      getCatalogOptions: (_catalog, values) => {
+        const kind = String(values?.kind || "");
+        const providers =
+          (kind && ROUTE_PROVIDERS_BY_KIND[kind]) || ALL_ROUTE_PROVIDERS;
+        return providers.map((p) => ({
+          label: p,
+          value: p,
+        }));
+      },
+    };
+  }
+
+  if (action === "route" && field === "model") {
+    return {
+      control: "select",
+      getCatalogOptions: (_catalog, values) => {
+        const provider = String(values?.provider || "");
+        const models = (provider && POPULAR_MODELS_BY_PROVIDER[provider]) || [
+          "gpt-4o",
+          "claude-3-5-sonnet",
+          "gemini-2.5-flash",
+        ];
+        return models.map((m) => ({
+          label: m,
+          value: m,
+        }));
+      },
     };
   }
 

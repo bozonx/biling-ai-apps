@@ -31,10 +31,10 @@ describe("admin modals and entity mappings", () => {
     ]);
     expect(adminEditFieldDefinitions.feature).toEqual(["pricing", "status"]);
     expect(adminEditFieldDefinitions.route).toEqual([
+      "kind",
       "provider",
       "model",
       "variant",
-      "kind",
     ]);
     expect(adminEditFieldDefinitions.productRoute).toEqual(["isActive"]);
     expect(adminEditFieldDefinitions.key).toEqual(["name", "scopes"]);
@@ -49,10 +49,10 @@ describe("admin modals and entity mappings", () => {
       "kind",
     ]);
     expect(adminActionDefinitions.route).toEqual([
+      "kind",
       "provider",
       "model",
       "variant",
-      "kind",
     ]);
     expect(adminActionDefinitions.key).toEqual(["productId", "name", "scopes"]);
   });

@@ -122,6 +122,48 @@ watch(
   { immediate: true },
 );
 
+watch(
+  () => values.kind,
+  (newKind) => {
+    if (
+      props.action === "route" &&
+      newKind &&
+      isOpen.value &&
+      props.mode === "create"
+    ) {
+      const availableProviders = getSelectOptions("provider").map(
+        (o) => o.value,
+      );
+      if (
+        availableProviders.length > 0 &&
+        !availableProviders.includes(values.provider)
+      ) {
+        values.provider = availableProviders[0];
+      }
+    }
+  },
+);
+
+watch(
+  () => values.provider,
+  (newProvider) => {
+    if (
+      props.action === "route" &&
+      newProvider &&
+      isOpen.value &&
+      props.mode === "create"
+    ) {
+      const availableModels = getSelectOptions("model").map((o) => o.value);
+      if (
+        availableModels.length > 0 &&
+        (!values.model || !availableModels.includes(values.model))
+      ) {
+        values.model = availableModels[0];
+      }
+    }
+  },
+);
+
 function getSelectOptions(field: string): SelectOption[] {
   const config = getFieldConfig(props.action, field);
   if (config.getCatalogOptions) {
@@ -305,7 +347,34 @@ function handleClose() {
 
           <!-- 1. Select Control -->
           <template v-if="getFieldConfig(action, field).control === 'select'">
-            <div v-if="getSelectOptions(field).length > 0" class="w-full">
+            <div
+              v-if="action === 'route' && field === 'model'"
+              class="space-y-2 w-full"
+            >
+              <UInput
+                v-model="values[field]"
+                placeholder="gpt-4o, claude-3-5-sonnet, ..."
+                class="w-full font-mono text-xs"
+              />
+              <div
+                v-if="getSelectOptions(field).length > 0"
+                class="flex flex-wrap items-center gap-1.5 pt-0.5"
+              >
+                <span class="text-xs text-muted">
+                  {{ t("admin.popularModels") }}:
+                </span>
+                <button
+                  v-for="opt in getSelectOptions(field)"
+                  :key="opt.value"
+                  type="button"
+                  class="text-xs px-2 py-0.5 rounded-full border border-default bg-muted/20 hover:bg-primary/10 hover:border-primary/50 hover:text-primary transition-colors font-mono cursor-pointer"
+                  @click="values[field] = opt.value"
+                >
+                  {{ opt.label }}
+                </button>
+              </div>
+            </div>
+            <div v-else-if="getSelectOptions(field).length > 0" class="w-full">
               <USelect
                 v-model="values[field]"
                 :items="getSelectOptions(field)"
