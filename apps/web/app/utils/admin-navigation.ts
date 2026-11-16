@@ -82,23 +82,26 @@ export const ADMIN_NAVIGATION: AdminNavGroup[] = [
       },
     ],
   },
-  {
-    labelKey: "admin.nav.groups.system",
-    icon: "i-lucide-settings",
-    items: [
-      {
-        labelKey: "admin.nav.settings",
-        to: "/admin/settings",
-        icon: "i-lucide-settings",
-      },
-    ],
-  },
 ];
 
 export function findAdminNavItem(path: string): {
   group: AdminNavGroup;
   item: AdminNavItem;
 } | null {
+  if (path === "/admin/settings" || path.startsWith("/admin/settings/")) {
+    return {
+      group: {
+        labelKey: "admin.nav.groups.system",
+        icon: "i-lucide-settings",
+        items: [],
+      },
+      item: {
+        labelKey: "admin.nav.settings",
+        to: "/admin/settings",
+        icon: "i-lucide-settings",
+      },
+    };
+  }
   for (const group of ADMIN_NAVIGATION) {
     for (const item of group.items) {
       if (item.to === "/admin" ? path === "/admin" : path.startsWith(item.to)) {

@@ -29,6 +29,31 @@ function sectionCount(sectionKey?: string): number | null {
   const list = admin.catalog[sectionKey];
   return Array.isArray(list) ? list.length : null;
 }
+
+const userLabel = computed(() =>
+  admin.token === "dev-admin" ? "dev-admin" : "Staff",
+);
+
+const userMenuItems = computed(() => [
+  [
+    {
+      label: t("admin.nav.settings"),
+      icon: "i-lucide-settings",
+      to: "/admin/settings",
+    },
+  ],
+  [
+    {
+      label: t("admin.disconnect"),
+      icon: "i-lucide-log-out",
+      color: "error" as const,
+      onSelect: () => {
+        admin.disconnect();
+        void navigateTo("/admin");
+      },
+    },
+  ],
+]);
 </script>
 
 <template>
@@ -140,35 +165,23 @@ function sectionCount(sectionKey?: string): number | null {
           </span>
 
           <div class="ml-auto flex items-center gap-2 sm:gap-3">
-            <UButton
-              to="/admin/settings"
-              icon="i-lucide-settings"
-              color="neutral"
-              variant="ghost"
-              size="sm"
-              :aria-label="t('admin.nav.settings')"
-            >
-              <span class="hidden sm:inline">{{
-                t("admin.nav.settings")
-              }}</span>
-            </UButton>
-
-            <AppLanguageSwitcher />
-            <AppThemeSwitcher />
-
-            <UBadge color="neutral" variant="subtle" size="sm">
-              {{ admin.token === "dev-admin" ? "dev-admin" : "Staff" }}
-            </UBadge>
-
-            <UButton
-              color="neutral"
-              variant="outline"
-              size="xs"
-              icon="i-lucide-log-out"
-              @click="admin.disconnect"
-            >
-              {{ t("admin.disconnect") }}
-            </UButton>
+            <UDropdownMenu :items="userMenuItems" :content="{ align: 'end' }">
+              <UButton
+                color="neutral"
+                variant="ghost"
+                class="flex items-center gap-2"
+                :aria-label="userLabel"
+              >
+                <UAvatar icon="i-lucide-user" size="xs" />
+                <span class="text-sm font-medium hidden sm:inline">
+                  {{ userLabel }}
+                </span>
+                <UIcon
+                  name="i-lucide-chevron-down"
+                  class="size-3.5 text-muted hidden sm:inline"
+                />
+              </UButton>
+            </UDropdownMenu>
           </div>
         </div>
       </header>

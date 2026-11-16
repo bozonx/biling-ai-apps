@@ -2,6 +2,11 @@ import { describe, expect, test } from "vitest";
 import { availableMilli, formatCredits } from "../app/utils/credits";
 import { ApiError, errorMessageKey, toApiError } from "../app/utils/api-error";
 import { isNavActive } from "../app/utils/navigation";
+import {
+  ADMIN_NAVIGATION,
+  findAdminNavItem,
+  isAdminNavActive,
+} from "../app/utils/admin-navigation";
 
 describe("credits", () => {
   test("formats milli-credits without float loss", () => {
@@ -40,4 +45,33 @@ describe("api errors", () => {
 test("navigation matches nested routes but not the root prefix", () => {
   expect(isNavActive("/settings/account", "/settings")).toBe(true);
   expect(isNavActive("/operations", "/")).toBe(false);
+});
+
+describe("admin navigation", () => {
+  test("excludes settings from sidebar navigation", () => {
+    const allPaths = ADMIN_NAVIGATION.flatMap((group) =>
+      group.items.map((item) => item.to),
+    );
+    expect(allPaths).not.toContain("/admin/settings");
+  });
+
+  test("resolves admin nav items including settings", () => {
+    expect(findAdminNavItem("/admin")?.item.labelKey).toBe(
+      "admin.nav.overview",
+    );
+    expect(findAdminNavItem("/admin/products")?.item.labelKey).toBe(
+      "admin.nav.products",
+    );
+    expect(findAdminNavItem("/admin/settings")?.item.labelKey).toBe(
+      "admin.nav.settings",
+    );
+  });
+
+  test("evaluates active state correctly", () => {
+    expect(isAdminNavActive("/admin", "/admin")).toBe(true);
+    expect(isAdminNavActive("/admin/products", "/admin")).toBe(false);
+    expect(isAdminNavActive("/admin/products/item-1", "/admin/products")).toBe(
+      true,
+    );
+  });
 });
