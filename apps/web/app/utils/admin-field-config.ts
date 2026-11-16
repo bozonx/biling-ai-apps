@@ -23,6 +23,7 @@ export interface AdminFieldConfig {
 }
 
 export const ADMIN_ENUM_OPTIONS: Record<string, string[]> = {
+  status: ["active", "disabled"],
   routeKind: ["llm", "stt", "tts", "image", "video", "mt", "embed"],
   featurePricing: ["fixed", "metered"],
   planKind: ["base", "addon"],
@@ -298,6 +299,22 @@ export function getFieldConfig(
           .filter((v) => !v.publishedAt)
           .map((v) => ({ label: `Plan Version v${v.version}`, value: v.id }));
       },
+    };
+  }
+
+  if (field === "status") {
+    return {
+      control: "select",
+      enumKey: "status",
+      options: ADMIN_ENUM_OPTIONS.status,
+    };
+  }
+
+  if (field === "isActive") {
+    return {
+      control: "select",
+      enumKey: "boolean",
+      options: ["true", "false"],
     };
   }
 

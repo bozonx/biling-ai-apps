@@ -12,11 +12,6 @@ useHead({ title: () => t("admin.nav.pricing") });
       :info="t('admin.pricing.info')"
     />
 
-    <AdminActionForm
-      :allowed-actions="['feature', 'price', 'rate', 'credits']"
-      default-action="feature"
-    />
-
     <AdminDataTable section="features" />
 
     <AdminDataTable section="prices" />

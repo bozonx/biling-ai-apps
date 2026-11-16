@@ -85,6 +85,31 @@ export const adminSectionColumns: Record<string, string[]> = {
   keys: ["id", "productId", "name", "prefix", "scopes", "status"],
 };
 
+export const adminEditFieldDefinitions: Record<string, string[]> = {
+  product: ["name", "status"],
+  plan: ["name", "kind", "productScope"],
+  feature: ["pricing", "status"],
+  route: ["provider", "model", "variant", "kind"],
+  productRoute: ["isActive"],
+  key: ["name", "scopes"],
+  price: ["creditsMilli", "unit", "per"],
+  rate: ["creditValueMicros"],
+};
+
+export const sectionToActionMap: Record<string, string> = {
+  products: "product",
+  plans: "plan",
+  versions: "version",
+  features: "feature",
+  prices: "price",
+  rates: "rate",
+  routes: "route",
+  routePrices: "routePrice",
+  productRoutes: "productRoute",
+  markups: "markup",
+  keys: "key",
+};
+
 export function formatAdminCell(row: unknown, field: string): string {
   if (!row || typeof row !== "object") return "";
   const value = (row as Record<string, unknown>)[field];

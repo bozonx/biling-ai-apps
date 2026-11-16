@@ -184,6 +184,88 @@ export const useAdminStore = defineStore("admin", () => {
     }
   }
 
+  async function updateEntity(
+    actionName: string,
+    id: string,
+    fieldNames: string[],
+    fieldValues: Record<string, unknown>,
+    extra?: Record<string, unknown>,
+  ): Promise<boolean> {
+    busy.value = true;
+    error.value = "";
+    try {
+      const body: Record<string, unknown> = {
+        action: `update${actionName.charAt(0).toUpperCase()}${actionName.slice(1)}`,
+        ...(id ? { id } : {}),
+        ...(extra ?? {}),
+      };
+      for (const field of fieldNames) {
+        const val = fieldValues[field];
+        if (val === undefined || val === null || val === "") {
+          continue;
+        }
+        if (field === "isActive") {
+          body[field] = val === true || val === "true";
+        } else if (["version", "creditGrantIntervalCount"].includes(field)) {
+          body[field] = Number(val);
+        } else if (["scopes", "productScope"].includes(field)) {
+          body[field] = Array.isArray(val)
+            ? val
+            : typeof val === "string"
+              ? val
+                  .split(",")
+                  .map((v) => v.trim())
+                  .filter(Boolean)
+              : val;
+        } else if (
+          ["creditGrants", "entitlements", "items", "limits", "tiers"].includes(
+            field,
+          )
+        ) {
+          body[field] = typeof val === "object" ? val : JSON.parse(String(val));
+        } else if (typeof val === "number") {
+          body[field] = String(val);
+        } else {
+          body[field] = val;
+        }
+      }
+      await request("catalog", body);
+      pending.fingerprint = "";
+      await load();
+      return true;
+    } catch {
+      error.value = "admin.failed";
+      return false;
+    } finally {
+      busy.value = false;
+    }
+  }
+
+  async function deleteEntity(
+    target: string,
+    id?: string,
+    extra?: { productId?: string; routeId?: string },
+  ): Promise<boolean> {
+    busy.value = true;
+    error.value = "";
+    try {
+      await request("catalog", {
+        action: "delete",
+        target,
+        ...(id ? { id } : {}),
+        ...(extra ?? {}),
+      });
+      pending.fingerprint = "";
+      await load();
+      return true;
+    } catch {
+      error.value = "admin.failed";
+      return false;
+    } finally {
+      busy.value = false;
+    }
+  }
+
   async function resolve(): Promise<void> {
     if (resolved.value) return;
     const stored = readStoredToken();
@@ -211,6 +293,8 @@ export const useAdminStore = defineStore("admin", () => {
     signInDev,
     disconnect,
     executeAction,
+    updateEntity,
+    deleteEntity,
     resolve,
   };
 });

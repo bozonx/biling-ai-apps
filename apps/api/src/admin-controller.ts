@@ -148,6 +148,89 @@ const actionSchema = z.discriminatedUnion("action", [
       .min(1),
   }),
   z.object({ action: z.literal("revokeKey"), id }),
+  z.object({
+    action: z.literal("updateProduct"),
+    id,
+    name: name.optional(),
+    status: z.enum(["active", "disabled"]).optional(),
+  }),
+  z.object({
+    action: z.literal("updatePlan"),
+    id,
+    name: name.optional(),
+    kind: z.enum(["base", "addon"]).optional(),
+    productScope: z.array(name).min(1).optional(),
+  }),
+  z.object({
+    action: z.literal("updateFeature"),
+    id,
+    pricing: z.enum(["fixed", "metered"]).optional(),
+    status: z.enum(["active", "disabled"]).optional(),
+  }),
+  z.object({
+    action: z.literal("updateRoute"),
+    id,
+    provider: name.optional(),
+    model: name.optional(),
+    variant: name.optional(),
+    kind: z
+      .enum(["llm", "stt", "tts", "image", "video", "mt", "embed"])
+      .optional(),
+  }),
+  z.object({
+    action: z.literal("updateProductRoute"),
+    productId: id,
+    routeId: id,
+    isActive: z.boolean(),
+  }),
+  z.object({
+    action: z.literal("updateKey"),
+    id,
+    name: name.optional(),
+    scopes: z
+      .array(
+        z.enum([
+          "wallets:read",
+          "entitlements:read",
+          "usage:read",
+          "holds:write",
+          "credits:grant",
+        ]),
+      )
+      .min(1)
+      .optional(),
+  }),
+  z.object({
+    action: z.literal("updatePrice"),
+    id,
+    creditsMilli: amount.optional(),
+    unit: name.optional(),
+    per: amount.optional(),
+  }),
+  z.object({
+    action: z.literal("updateRate"),
+    id,
+    creditValueMicros: amount,
+  }),
+  z.object({
+    action: z.literal("delete"),
+    target: z.enum([
+      "product",
+      "plan",
+      "feature",
+      "route",
+      "productRoute",
+      "key",
+      "price",
+      "rate",
+      "markup",
+      "routePrice",
+      "version",
+    ]),
+    id: id.optional(),
+    productId: id.optional(),
+    routeId: id.optional(),
+  }),
 ]);
 @Controller("admin")
 export class AdminController {
@@ -461,6 +544,160 @@ export class AdminController {
             data: { status: "revoked", revokedAt: now },
           });
           break;
+        case "updateProduct":
+          result = await tx.product.update({
+            where: { id: input.id },
+            data: {
+              ...(input.name ? { name: input.name } : {}),
+              ...(input.status ? { status: input.status } : {}),
+            },
+          });
+          break;
+        case "updatePlan":
+          result = await tx.plan.update({
+            where: { id: input.id },
+            data: {
+              ...(input.name ? { name: input.name } : {}),
+              ...(input.kind ? { kind: input.kind } : {}),
+              ...(input.productScope
+                ? { productScope: input.productScope }
+                : {}),
+            },
+          });
+          break;
+        case "updateFeature":
+          result = await tx.productFeature.update({
+            where: { id: input.id },
+            data: {
+              ...(input.pricing ? { pricing: input.pricing } : {}),
+              ...(input.status ? { status: input.status } : {}),
+            },
+          });
+          break;
+        case "updateRoute":
+          result = await tx.modelRoute.update({
+            where: { id: input.id },
+            data: {
+              ...(input.provider ? { provider: input.provider } : {}),
+              ...(input.model ? { model: input.model } : {}),
+              ...(input.variant ? { variant: input.variant } : {}),
+              ...(input.kind ? { kind: input.kind } : {}),
+            },
+          });
+          break;
+        case "updateProductRoute":
+          await tx.productModelRoute.update({
+            where: {
+              productId_routeId: {
+                productId: input.productId,
+                routeId: input.routeId,
+              },
+            },
+            data: { isActive: input.isActive },
+          });
+          result = { id: `${input.productId}_${input.routeId}` };
+          break;
+        case "updateKey":
+          result = await tx.productApiKey.update({
+            where: { id: input.id },
+            data: {
+              ...(input.name ? { name: input.name } : {}),
+              ...(input.scopes ? { scopes: input.scopes } : {}),
+            },
+          });
+          break;
+        case "updatePrice":
+          result = await tx.featurePrice.update({
+            where: { id: input.id },
+            data: {
+              ...(input.creditsMilli
+                ? { creditsMilli: BigInt(input.creditsMilli) }
+                : {}),
+              ...(input.unit ? { unit: input.unit } : {}),
+              ...(input.per ? { per: BigInt(input.per) } : {}),
+            },
+          });
+          break;
+        case "updateRate":
+          result = await tx.creditRateVersion.update({
+            where: { id: input.id },
+            data: {
+              creditValueMicros: BigInt(input.creditValueMicros),
+            },
+          });
+          break;
+        case "delete": {
+          if (input.target === "productRoute") {
+            if (!input.productId || !input.routeId) {
+              throw new BadRequestException({ code: "INVALID_REQUEST" });
+            }
+            await tx.productModelRoute.delete({
+              where: {
+                productId_routeId: {
+                  productId: input.productId,
+                  routeId: input.routeId,
+                },
+              },
+            });
+            result = { id: `${input.productId}_${input.routeId}` };
+          } else {
+            if (!input.id) {
+              throw new BadRequestException({ code: "INVALID_REQUEST" });
+            }
+            const targetId = input.id;
+            switch (input.target) {
+              case "product":
+                result = await tx.product.delete({ where: { id: targetId } });
+                break;
+              case "plan":
+                result = await tx.plan.delete({ where: { id: targetId } });
+                break;
+              case "feature":
+                result = await tx.productFeature.delete({
+                  where: { id: targetId },
+                });
+                break;
+              case "route":
+                result = await tx.modelRoute.delete({
+                  where: { id: targetId },
+                });
+                break;
+              case "key":
+                result = await tx.productApiKey.delete({
+                  where: { id: targetId },
+                });
+                break;
+              case "price":
+                result = await tx.featurePrice.delete({
+                  where: { id: targetId },
+                });
+                break;
+              case "rate":
+                result = await tx.creditRateVersion.delete({
+                  where: { id: targetId },
+                });
+                break;
+              case "markup":
+                result = await tx.markupPolicyVersion.delete({
+                  where: { id: targetId },
+                });
+                break;
+              case "routePrice":
+                result = await tx.routePriceVersion.delete({
+                  where: { id: targetId },
+                });
+                break;
+              case "version":
+                result = await tx.planVersion.delete({
+                  where: { id: targetId },
+                });
+                break;
+              default:
+                throw new BadRequestException({ code: "INVALID_TARGET" });
+            }
+          }
+          break;
+        }
       }
       await tx.adminAuditLog.create({
         data: {

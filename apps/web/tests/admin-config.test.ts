@@ -75,4 +75,14 @@ describe("admin field config", () => {
     const options = productConfig.getCatalogOptions?.(sampleCatalog);
     expect(options).toEqual([{ label: "Text AI (text-ai)", value: "prod-1" }]);
   });
+
+  test("identifies status and boolean controls", () => {
+    const statusConfig = getFieldConfig("product", "status");
+    expect(statusConfig.control).toBe("select");
+    expect(statusConfig.options).toEqual(["active", "disabled"]);
+
+    const activeConfig = getFieldConfig("productRoute", "isActive");
+    expect(activeConfig.control).toBe("select");
+    expect(activeConfig.options).toEqual(["true", "false"]);
+  });
 });

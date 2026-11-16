@@ -8,7 +8,15 @@
     "copied": "Copied",
     "goHome": "Go home",
     "moreInfo": "More information",
-    "now": "Now"
+    "now": "Now",
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "create": "Create",
+    "save": "Save",
+    "edit": "Edit",
+    "delete": "Delete",
+    "actions": "Actions",
+    "close": "Close"
   },
   "nav": {
     "menu": "Menu",
@@ -113,6 +121,19 @@
     "disconnect": "Disconnect",
     "action": "Action",
     "save": "Submit",
+    "create": "Create",
+    "edit": "Edit",
+    "delete": "Delete",
+    "actionsColumn": "Actions",
+    "deleteConfirmTitle": "Confirm Deletion",
+    "deleteConfirmDesc": "Are you sure you want to delete this record? This action cannot be undone.",
+    "modal": {
+      "createTitle": "Create: {entity}",
+      "editTitle": "Edit: {name}",
+      "entityId": "Entity ID",
+      "codeImmutable": "Code is immutable after creation",
+      "keySecretNotice": "Save the generated API key right now. It will not be shown again!"
+    },
     "failed": "Request failed. Check permissions and form fields.",
     "secret": "Save this key: it is shown only once",
     "nav": {
@@ -191,6 +212,15 @@
     "selectAll": "Select all",
     "clearAll": "Clear all",
     "enums": {
+      "status": {
+        "active": "Active",
+        "disabled": "Disabled",
+        "revoked": "Revoked"
+      },
+      "boolean": {
+        "true": "Yes",
+        "false": "No"
+      },
       "routeKind": {
         "llm": "LLM (Language models)",
         "stt": "STT (Speech-to-text)",

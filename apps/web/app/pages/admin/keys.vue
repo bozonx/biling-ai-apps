@@ -12,11 +12,6 @@ useHead({ title: () => t("admin.sections.keys") });
       :info="t('admin.keys.info')"
     />
 
-    <AdminActionForm
-      :allowed-actions="['key', 'revokeKey']"
-      default-action="key"
-    />
-
     <AdminDataTable section="keys" />
   </div>
 </template>
