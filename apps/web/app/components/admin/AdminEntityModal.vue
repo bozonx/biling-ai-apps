@@ -71,23 +71,21 @@ function initValues() {
   for (const field of currentFields) {
     const config = getFieldConfig(props.action, field);
 
-    if (props.mode === "edit" && props.initialData) {
-      const existing = props.initialData[field];
-      if (existing !== undefined && existing !== null) {
-        if (config.control === "json") {
-          values[field] =
-            typeof existing === "object"
-              ? JSON.stringify(existing, null, 2)
-              : String(existing);
-        } else if (config.control === "multiselect") {
-          values[field] = Array.isArray(existing) ? [...existing] : [existing];
-        } else if (field === "isActive") {
-          values[field] = existing ? "true" : "false";
-        } else {
-          values[field] = existing;
-        }
-        continue;
+    const existing = props.initialData?.[field];
+    if (existing !== undefined && existing !== null) {
+      if (config.control === "json") {
+        values[field] =
+          typeof existing === "object"
+            ? JSON.stringify(existing, null, 2)
+            : String(existing);
+      } else if (config.control === "multiselect") {
+        values[field] = Array.isArray(existing) ? [...existing] : [existing];
+      } else if (field === "isActive") {
+        values[field] = existing ? "true" : "false";
+      } else {
+        values[field] = existing;
       }
+      continue;
     }
 
     // Default initialization for create mode

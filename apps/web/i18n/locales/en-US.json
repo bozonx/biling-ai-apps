@@ -398,6 +398,52 @@
       "window": "Time window for rate limiting: minute, hour, day, or month.",
       "meter": "Meter counter identifier: requests, credits, or cost_nanos.",
       "max": "Maximum allowed meter threshold within the window."
+    },
+    "filterByProduct": "Filter by product",
+    "allProducts": "All products",
+    "productDetail": {
+      "backToProducts": "Back to products",
+      "switchProduct": "Switch product",
+      "settings": "Product settings",
+      "lateCommitWindow": "Late commit window",
+      "lateCommitWindowHint": "Time window in seconds for finalized capture after hold placement.",
+      "customSettings": "Custom configuration (JSON)",
+      "noCustomSettings": "No custom configuration specified",
+      "tabs": {
+        "overview": "Overview",
+        "features": "Features & Pricing",
+        "plans": "Plans",
+        "ai": "AI Models & Margins",
+        "keys": "API Keys"
+      },
+      "stats": {
+        "features": "Features",
+        "plans": "Plans",
+        "routes": "Assigned AI models",
+        "keys": "API keys"
+      },
+      "notFound": "Product not found",
+      "notFoundDesc": "Product with the specified ID or code does not exist in the catalog."
+    },
+    "planDetail": {
+      "backToPlans": "Back to plans",
+      "versions": "Plan versions",
+      "productScope": "Product scope",
+      "visibility": "Visibility",
+      "kind": "Plan kind",
+      "notFound": "Plan not found",
+      "notFoundDesc": "Plan with the specified ID does not exist in the catalog."
+    },
+    "routeDetail": {
+      "backToRoutes": "Back to AI routes",
+      "prices": "Cost rate history",
+      "products": "Assigned products",
+      "provider": "Provider",
+      "model": "Model",
+      "variant": "Variant",
+      "kind": "Route kind",
+      "notFound": "Route not found",
+      "notFoundDesc": "AI route with the specified ID does not exist in the catalog."
     }
   }
 }

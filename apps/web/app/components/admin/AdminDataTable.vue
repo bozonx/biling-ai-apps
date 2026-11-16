@@ -13,6 +13,7 @@ const props = withDefaults(
     columns?: string[];
     title?: string;
     createAction?: string;
+    defaultValues?: Record<string, any>;
     canCreate?: boolean;
     canEdit?: boolean;
     canDelete?: boolean;
@@ -22,6 +23,7 @@ const props = withDefaults(
     columns: undefined,
     title: undefined,
     createAction: undefined,
+    defaultValues: undefined,
     canCreate: undefined,
     canEdit: undefined,
     canDelete: undefined,
@@ -78,9 +80,36 @@ const isDeleteConfirmOpen = ref(false);
 const rowToDelete = ref<Record<string, any> | null>(null);
 
 function openCreateModal() {
-  selectedRow.value = {};
+  selectedRow.value = props.defaultValues ? { ...props.defaultValues } : {};
   modalMode.value = "create";
   isEntityModalOpen.value = true;
+}
+
+function findProduct(idOrCode: unknown): Record<string, any> | null {
+  if (!idOrCode) return null;
+  const list = admin.catalog.products as Array<Record<string, any>> | undefined;
+  return list?.find((p) => p.id === idOrCode || p.code === idOrCode) ?? null;
+}
+
+function findPlan(planId: unknown): Record<string, any> | null {
+  if (!planId) return null;
+  const list = admin.catalog.plans as Array<Record<string, any>> | undefined;
+  return list?.find((p) => p.id === planId) ?? null;
+}
+
+function findRoute(routeId: unknown): Record<string, any> | null {
+  if (!routeId) return null;
+  const list = admin.catalog.routes as Array<Record<string, any>> | undefined;
+  return list?.find((r) => r.id === routeId) ?? null;
+}
+
+function getDetailLink(row: unknown): string | null {
+  const r = row as Record<string, any>;
+  if (!r?.id) return null;
+  if (props.section === "products") return `/admin/products/${r.id}`;
+  if (props.section === "plans") return `/admin/plans/${r.id}`;
+  if (props.section === "routes") return `/admin/routes/${r.id}`;
+  return null;
 }
 
 function openEditModal(row: unknown) {
@@ -221,6 +250,104 @@ async function confirmDelete() {
                 >
                   <AppDateTime :value="String((row as any)[col])" />
                 </template>
+                <template
+                  v-else-if="
+                    section === 'products' && (col === 'name' || col === 'code')
+                  "
+                >
+                  <NuxtLink
+                    :to="`/admin/products/${(row as any).id}`"
+                    class="inline-flex items-center gap-1 text-primary hover:underline font-medium font-sans"
+                  >
+                    <span>{{ formatAdminCell(row, col) }}</span>
+                    <UIcon
+                      v-if="col === 'name'"
+                      name="i-lucide-arrow-right"
+                      class="size-3 text-muted shrink-0"
+                    />
+                  </NuxtLink>
+                </template>
+                <template
+                  v-else-if="
+                    section === 'plans' && (col === 'name' || col === 'code')
+                  "
+                >
+                  <NuxtLink
+                    :to="`/admin/plans/${(row as any).id}`"
+                    class="inline-flex items-center gap-1 text-primary hover:underline font-medium font-sans"
+                  >
+                    <span>{{ formatAdminCell(row, col) }}</span>
+                    <UIcon
+                      v-if="col === 'name'"
+                      name="i-lucide-arrow-right"
+                      class="size-3 text-muted shrink-0"
+                    />
+                  </NuxtLink>
+                </template>
+                <template v-else-if="section === 'routes' && col === 'model'">
+                  <NuxtLink
+                    :to="`/admin/routes/${(row as any).id}`"
+                    class="inline-flex items-center gap-1 text-primary hover:underline font-medium font-sans"
+                  >
+                    <span>{{ formatAdminCell(row, col) }}</span>
+                    <UIcon
+                      name="i-lucide-arrow-right"
+                      class="size-3 text-muted shrink-0"
+                    />
+                  </NuxtLink>
+                </template>
+                <template v-else-if="col === 'productId'">
+                  <NuxtLink
+                    v-if="findProduct((row as any)[col])"
+                    :to="`/admin/products/${findProduct((row as any)[col])!.id}`"
+                    class="inline-flex items-center gap-1 text-primary hover:underline font-sans font-medium"
+                  >
+                    <UIcon
+                      name="i-lucide-package"
+                      class="size-3.5 text-muted shrink-0"
+                    />
+                    <span>{{ findProduct((row as any)[col])!.name }}</span>
+                    <span class="text-xs text-muted">
+                      ({{ findProduct((row as any)[col])!.code }})
+                    </span>
+                  </NuxtLink>
+                  <span v-else>{{ formatAdminCell(row, col) }}</span>
+                </template>
+                <template v-else-if="col === 'planId'">
+                  <NuxtLink
+                    v-if="findPlan((row as any)[col])"
+                    :to="`/admin/plans/${findPlan((row as any)[col])!.id}`"
+                    class="inline-flex items-center gap-1 text-primary hover:underline font-sans font-medium"
+                  >
+                    <UIcon
+                      name="i-lucide-layers"
+                      class="size-3.5 text-muted shrink-0"
+                    />
+                    <span>{{ findPlan((row as any)[col])!.name }}</span>
+                    <span class="text-xs text-muted">
+                      ({{ findPlan((row as any)[col])!.code }})
+                    </span>
+                  </NuxtLink>
+                  <span v-else>{{ formatAdminCell(row, col) }}</span>
+                </template>
+                <template v-else-if="col === 'routeId'">
+                  <NuxtLink
+                    v-if="findRoute((row as any)[col])"
+                    :to="`/admin/routes/${findRoute((row as any)[col])!.id}`"
+                    class="inline-flex items-center gap-1 text-primary hover:underline font-sans font-medium"
+                  >
+                    <UIcon
+                      name="i-lucide-cpu"
+                      class="size-3.5 text-muted shrink-0"
+                    />
+                    <span>
+                      {{ findRoute((row as any)[col])!.provider }}/{{
+                        findRoute((row as any)[col])!.model
+                      }}
+                    </span>
+                  </NuxtLink>
+                  <span v-else>{{ formatAdminCell(row, col) }}</span>
+                </template>
                 <template v-else>
                   {{ formatAdminCell(row, col) }}
                 </template>
@@ -233,6 +360,15 @@ async function confirmDelete() {
               class="px-4 py-2 text-right whitespace-nowrap"
             >
               <div class="flex items-center justify-end gap-1">
+                <UButton
+                  v-if="getDetailLink(row)"
+                  :to="getDetailLink(row)!"
+                  color="neutral"
+                  variant="ghost"
+                  size="xs"
+                  icon="i-lucide-arrow-right"
+                  :title="t('common.moreInfo')"
+                />
                 <UButton
                   v-if="hasEdit"
                   color="neutral"
